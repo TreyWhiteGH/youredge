@@ -1,0 +1,51 @@
+{
+  "user_id": "trey2",
+  "created_at": "2026-01-30T05:30:17.298692",
+  "picks": [],
+  "password_hash": "014b4cc4e25558b8af6677dab5d2e47ea62dcc5df61c47f8c4c8a8e24a888d8d",
+  "tokens": [
+    "06e70b641224768a1869ef3214bb93d4",
+    "be3f97d68cc710ce2437b1b26f4a5c97"
+  ],
+  "subscription_tier": "elite",
+  "tier_features": {
+    "allowed_sports": [
+      "nba",
+      "nfl",
+      "ncaaf",
+      "ncaam",
+      "ncaaw"
+    ],
+    "max_favorite_teams": null,
+    "max_alerts_per_day": null,
+    "custom_game_subscriptions": true,
+    "notification_channels": [
+      "in_app",
+      "email",
+      "sms",
+      "push"
+    ],
+    "custom_ev_threshold": true
+  },
+  "alert_preferences": {
+    "alerts_enabled": true,
+    "favorite_teams": [],
+    "favorite_sports": [
+      "nba"
+    ],
+    "min_ev_threshold": 8,
+    "favorite_markets": [
+      "spread",
+      "moneyline"
+    ],
+    "quiet_hours": {
+      "start": "23:00",
+      "end": "08:00"
+    },
+    "subscribed_games": []
+  },
+  "alert_usage": {
+    "alerts_today": 0,
+    "last_reset": "2026-01-30T05:30:17.298713"
+  }
+}

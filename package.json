@@ -1,0 +1,9 @@
+{
+  "name": "youre-edge-monorepo",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "web",
+    "mobile"
+  ]
+}

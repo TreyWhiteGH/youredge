@@ -4,12 +4,12 @@ import uuid
 import datetime
 from flask import Flask, jsonify, request, g
 
-from config import config
-from picks_logic import build_game_context, compute_pick_progress
-from scores.providers import get_provider
-from odds.providers import get_odds_provider
-from odds.providers.odds_api import OddsApiError
-from user_store import (
+from .config import config
+from .picks_logic import build_game_context, compute_pick_progress
+from .scores.providers import get_provider
+from .odds.providers import get_odds_provider
+from .odds.providers.odds_api import OddsApiError
+from .user_store import (
     get_user_picks,
     create_or_login_user,
     register_user,
@@ -23,7 +23,7 @@ from user_store import (
     get_user_alert_preferences,
     update_user_alert_preferences,
 )
-from alerts.alert_detector import (
+from .alerts.alert_detector import (
     get_user_active_alerts,
     mark_alert_viewed,
     dismiss_alert,
@@ -85,11 +85,11 @@ else:
 picks_generator = None
 try:
     logger.info("Initializing AI Picks Generator components...")
-    from ml.data_collection import HistoricalDataCollector
-    from ml.features import NBAFeatureExtractor
-    from ml.parlay_builder import ParlayBuilder
-    from ml.prompt_interpreter import PromptInterpreter
-    from ml.reasoning import ReasoningGenerator
+    from .ml.data_collection import HistoricalDataCollector
+    from .ml.features import NBAFeatureExtractor
+    from .ml.parlay_builder import ParlayBuilder
+    from .ml.prompt_interpreter import PromptInterpreter
+    from .ml.reasoning import ReasoningGenerator
     import os
 
     # Initialize components
@@ -121,9 +121,9 @@ picks_scheduler = None
 if picks_generator:
     try:
         logger.info("Initializing daily picks scheduler...")
-        from ml.scheduler import init_scheduler
+        from .ml.scheduler import init_scheduler
         init_scheduler(picks_generator)
-        from ml.scheduler import get_scheduler
+        from .ml.scheduler import get_scheduler
         picks_scheduler = get_scheduler()
         if picks_scheduler:
             logger.info("Daily picks scheduler initialized successfully")
@@ -138,7 +138,7 @@ def shutdown_scheduler(exception=None):
     """Shutdown scheduler when app closes."""
     if picks_scheduler:
         try:
-            from ml.scheduler import stop_scheduler
+            from .ml.scheduler import stop_scheduler
             stop_scheduler()
         except Exception as exc:
             logger.error(f"Error stopping scheduler: {exc}")

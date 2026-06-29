@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Dict, List, Optional
 from pathlib import Path
 
-from scores.retrieve import fetch_scoreboard
+from ..scores.retrieve import fetch_scoreboard
 
 logger = logging.getLogger(__name__)
 

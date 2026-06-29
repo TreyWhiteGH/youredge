@@ -5,7 +5,7 @@ Checks if a user is allowed to receive an alert based on their subscription tier
 preferences, and limits.
 """
 
-from user_store import (
+from ..user_store import (
     get_user_tier_features,
     get_user_alert_preferences,
     get_daily_alert_count,

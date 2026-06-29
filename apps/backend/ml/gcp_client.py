@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from config import config
+from ..config import config
 
 logger = logging.getLogger(__name__)
 

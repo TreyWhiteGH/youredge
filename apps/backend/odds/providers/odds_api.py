@@ -4,7 +4,7 @@ import time
 
 import requests
 
-from config import config
+from ...config import config
 from .base import OddsProvider
 
 # Map our sport ids to The Odds API sport keys

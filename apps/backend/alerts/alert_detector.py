@@ -10,10 +10,10 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 from uuid import uuid4
 
-from alerts.game_monitor import monitor_live_games
-from alerts.ev_calculator import evaluate_opportunity
-from alerts.tier_validator import is_alert_allowed_for_user, get_user_ev_threshold
-from user_store import (
+from .game_monitor import monitor_live_games
+from .ev_calculator import evaluate_opportunity
+from .tier_validator import is_alert_allowed_for_user, get_user_ev_threshold
+from ..user_store import (
     load_user,
     save_user,
     increment_daily_alert_count,

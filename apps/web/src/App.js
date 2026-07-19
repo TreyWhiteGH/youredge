@@ -11,6 +11,7 @@ const SPORTS = [
   { id: 'nba', label: 'NBA' },
   { id: 'ncaam', label: "Men's CBB" },
   { id: 'ncaaw', label: "Women's CBB" },
+  { id: 'wnba',  label: 'WNBA' },
 ];
 
 const buildDate = (dayOffset = 0) => {

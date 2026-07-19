@@ -1,5 +1,6 @@
 # Secrets
 secrets.env
+apps/backend/user_data/*
 
 # Environment-specific configuration
 conf/local.toml

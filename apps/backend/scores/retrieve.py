@@ -15,6 +15,7 @@ DEFAULT_SCOREBOARDS = {
     "ncaam": "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard",
     "ncaaw": "https://site.api.espn.com/apis/site/v2/sports/basketball/womens-college-basketball/scoreboard",
     "nba": "https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard",
+    "wnba": "https://site.api.espn.com/apis/site/v2/sports/basketball/wnba/scoreboard",
     # Alias to keep the common "ncaab" key working for men's college hoops
     "ncaab": "https://site.api.espn.com/apis/site/v2/sports/basketball/mens-college-basketball/scoreboard",
 }

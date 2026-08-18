@@ -31,6 +31,16 @@ ingest-cfbd:
 
 ingest-all: ingest-nfl ingest-cfbd
 
+# Current-season schedules (future games — required for odds event resolution)
+schedules:
+	docker compose run --rm ingest python -m youredge.ingest.schedules --season 2026
+
+poll-odds:
+	docker compose run --rm ingest python -m youredge.ingest.odds_poller --once
+
+devig:
+	docker compose run --rm ingest python -m youredge.pricing.devig
+
 # Nukes the DB volume and re-runs migrations on next `make up`
 reset-db:
 	docker compose down -v

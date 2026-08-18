@@ -18,6 +18,8 @@ from sqlalchemy import text
 
 from youredge.config import get_settings
 from youredge.db import get_engine
+from youredge.ingest.resolve import resolve_event
+from youredge.pricing.devig import devig_snapshots
 
 log = logging.getLogger(__name__)
 BASE = "https://api.the-odds-api.com/v4"
@@ -53,22 +55,27 @@ async def poll_once(league: str) -> int:
 
     engine = get_engine()
     rows = 0
+    resolved = 0
     async with engine.begin() as conn:
         for ev in events:
-            # TODO(phase-0): resolve ev['id'] -> canonical game_id via entity_xwalk.
-            # Until then, stub a games row under the oddsapi: id so snapshots can land;
-            # the resolver will remap these to canonical ids later.
-            gid = f"{league}:oddsapi:{ev['id']}"
             kickoff = datetime.fromisoformat(ev["commence_time"].replace("Z", "+00:00"))
-            season = kickoff.year if kickoff.month >= 6 else kickoff.year - 1
-            await conn.execute(
-                text("""
-                    INSERT INTO games (game_id, league, season, kickoff, status)
-                    VALUES (:gid, :league, :season, :kickoff, 'scheduled')
-                    ON CONFLICT (game_id) DO NOTHING
-                """),
-                {"gid": gid, "league": league, "season": season, "kickoff": kickoff},
+            gid = await resolve_event(
+                conn, league, ev["id"], ev["home_team"], ev["away_team"], kickoff
             )
+            if gid:
+                resolved += 1
+            else:
+                # Fallback stub keeps snapshots flowing; re-resolves once schedules land.
+                gid = f"{league}:oddsapi:{ev['id']}"
+                season = kickoff.year if kickoff.month >= 6 else kickoff.year - 1
+                await conn.execute(
+                    text("""
+                        INSERT INTO games (game_id, league, season, kickoff, status)
+                        VALUES (:gid, :league, :season, :kickoff, 'scheduled')
+                        ON CONFLICT (game_id) DO NOTHING
+                    """),
+                    {"gid": gid, "league": league, "season": season, "kickoff": kickoff},
+                )
             for bm in ev.get("bookmakers", []):
                 for mkt in bm.get("markets", []):
                     res = await conn.execute(
@@ -98,6 +105,9 @@ async def poll_once(league: str) -> int:
                             },
                         )
                         rows += 1
+        filled = await devig_snapshots(conn)
+    log.info("%s: %d/%d events resolved to canonical games, %d fair probs filled",
+             league, resolved, len(events), filled)
     return rows
 
 

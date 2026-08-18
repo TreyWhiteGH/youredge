@@ -50,3 +50,6 @@ devig:
 # Nukes the DB volume and re-runs migrations on next `make up`
 reset-db:
 	docker compose down -v
+
+ingest-pff:
+	docker compose run --rm ingest python -m youredge.ingest.pff

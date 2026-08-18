@@ -35,6 +35,9 @@ ingest-all: ingest-nfl ingest-cfbd
 schedules:
 	docker compose run --rm ingest python -m youredge.ingest.schedules --season 2026
 
+ingest-snaps:
+	docker compose run --rm ingest python -m youredge.ingest.snaps_depth --seasons 2023 2024 2025 --depth-season 2026
+
 ingest-players:
 	docker compose run --rm ingest python -m youredge.ingest.players
 

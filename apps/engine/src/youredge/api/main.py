@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 from youredge import __version__
-from youredge.api.routes import players, sgp, tendencies
+from youredge.api.routes import players, sgp, teams, tendencies
 from youredge.db import get_engine
 
 
@@ -18,6 +18,7 @@ app = FastAPI(title="YourEdge Engine", version=__version__, lifespan=lifespan)
 app.include_router(sgp.router, prefix="/api/football")
 app.include_router(tendencies.router, prefix="/api/football")
 app.include_router(players.router, prefix="/api/football")
+app.include_router(teams.router, prefix="/api/football")
 
 
 @app.get("/api/football/health")

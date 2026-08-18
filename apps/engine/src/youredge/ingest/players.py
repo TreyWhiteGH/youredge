@@ -33,7 +33,7 @@ def _load_player_pool(current_season: int) -> pd.DataFrame:
     players = nfl.load_players().to_pandas()
     players = players[
         (players.last_season >= MIN_LAST_SEASON) & players.gsis_id.notna()
-    ][["gsis_id", "display_name", "first_name", "last_name", "position", "latest_team", "espn_id"]]
+    ][["gsis_id", "display_name", "first_name", "last_name", "position", "latest_team", "espn_id", "pfr_id"]]
     log.info("nflverse players (last_season >= %s): %d", MIN_LAST_SEASON, len(players))
 
     rosters = nfl.load_rosters(seasons=[current_season]).to_pandas()
@@ -53,6 +53,7 @@ def _load_player_pool(current_season: int) -> pd.DataFrame:
         "position": new.position,
         "latest_team": new.team,
         "espn_id": new.espn_id if "espn_id" in new.columns else None,
+        "pfr_id": new.pfr_id if "pfr_id" in new.columns else None,
     })
     return pd.concat([players.reset_index(), additions], ignore_index=True)
 
@@ -84,15 +85,17 @@ async def ingest_players(current_season: int = 2026) -> int:
                     "pos": p.position if pd.notna(p.position) else None,
                 },
             )
-            if pd.notna(p.espn_id):
-                await conn.execute(
-                    text("""
-                        INSERT INTO entity_xwalk (entity_type, canonical_id, source, source_id)
-                        VALUES ('player', :cid, 'espn', :sid)
-                        ON CONFLICT (entity_type, source, source_id) DO NOTHING
-                    """),
-                    {"cid": f"nfl:{p.gsis_id}", "sid": str(int(p.espn_id))},
-                )
+            for source, val in (("espn", p.espn_id), ("pfr", p.pfr_id)):
+                if pd.notna(val):
+                    sid = str(int(val)) if source == "espn" else str(val)
+                    await conn.execute(
+                        text("""
+                            INSERT INTO entity_xwalk (entity_type, canonical_id, source, source_id)
+                            VALUES ('player', :cid, :source, :sid)
+                            ON CONFLICT (entity_type, source, source_id) DO NOTHING
+                        """),
+                        {"cid": f"nfl:{p.gsis_id}", "source": source, "sid": sid},
+                    )
 
         # Name aliases for prop-outcome resolution; ambiguous names are dropped
         # (an odds feed saying just "Josh Allen" must never guess between two).

@@ -27,14 +27,28 @@ def normalize_name(name: str) -> str:
     """Accent-, punctuation-, and case-insensitive form for alias matching.
 
     'San José State' -> 'san jose st', 'Arkansas-Pine Bluff' -> 'arkansas pine bluff',
-    'The Citadel' -> 'citadel'. 'State'->'st' folds the two sources' conventions.
+    'The Citadel' -> 'citadel', 'T.J. Watt' -> 'tj watt'. 'State'->'st' folds the
+    two sources' conventions; runs of single letters merge so dotted initials
+    match their undotted query form.
     """
     s = unicodedata.normalize("NFD", name)
     s = "".join(c for c in s if not unicodedata.combining(c))
     s = re.sub(r"[''ʻ`]", "", s.lower())  # Hawai'i -> hawaii, not 'hawai i'
     s = re.sub(r"[^a-z0-9]+", " ", s).strip()
     tokens = [("st" if t == "state" else t) for t in s.split() if t != "the"]
-    return " ".join(tokens)
+    merged: list[str] = []
+    run: list[str] = []
+    for t in tokens:
+        if len(t) == 1:
+            run.append(t)
+        else:
+            if run:
+                merged.append("".join(run))
+                run = []
+            merged.append(t)
+    if run:
+        merged.append("".join(run))
+    return " ".join(merged)
 
 _XWALK_GET = text("""
     SELECT canonical_id FROM entity_xwalk

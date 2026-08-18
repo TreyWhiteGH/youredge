@@ -1,0 +1,81 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: youredge-db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-youredge}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-youredge_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-youredge}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: youredge-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redisdata:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # New football Engine (FastAPI) — serves /api/football/*
+  engine:
+    build: ./apps/engine
+    container_name: youredge-engine
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-youredge}:${POSTGRES_PASSWORD:-youredge_dev}@db:5432/${POSTGRES_DB:-youredge}
+      REDIS_URL: redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./apps/engine/src:/app/src
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    command: ["uvicorn", "youredge.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  # One-shot ingestion runner:
+  #   docker compose run --rm ingest python -m youredge.ingest.nfl_pbp --seasons 2023 2024 2025
+  ingest:
+    build: ./apps/engine
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-youredge}:${POSTGRES_PASSWORD:-youredge_dev}@db:5432/${POSTGRES_DB:-youredge}
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./apps/engine/src:/app/src
+      - ./data:/app/data
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles: ["ingest"]
+
+  # Legacy Flask backend (basketball-era endpoints). Opt-in:
+  #   docker compose --profile legacy up backend
+  backend:
+    build: .
+    container_name: youredge-backend
+    env_file: .env
+    ports:
+      - "8080:8080"
+    profiles: ["legacy"]
+
+volumes:
+  pgdata:
+  redisdata:

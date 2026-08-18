@@ -1,5 +1,9 @@
 # Secrets
 secrets.env
+.env
+
+# Data dumps (regenerable via ingest --dump)
+data/
 apps/backend/user_data/*
 
 # Environment-specific configuration

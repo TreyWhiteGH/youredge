@@ -40,6 +40,10 @@ NGS_TYPED = ["avg_time_to_throw", "avg_intended_air_yards", "avg_completed_air_y
              "avg_air_yards_to_sticks", "aggressiveness",
              "completion_percentage_above_expectation", "passer_rating"]
 
+NGS_REC_TYPED = ["avg_cushion", "avg_separation", "avg_intended_air_yards",
+                 "percent_share_of_intended_air_yards", "catch_percentage",
+                 "avg_yac", "avg_expected_yac", "avg_yac_above_expectation"]
+
 
 def _clean(v):
     if v is None or (isinstance(v, float) and pd.isna(v)) or pd.isna(v):
@@ -146,9 +150,45 @@ async def ingest_qb_ngs(seasons: list[int]) -> int:
     return upserted
 
 
+async def ingest_receiving_ngs(seasons: list[int]) -> int:
+    ngs = nfl.load_nextgen_stats(seasons=seasons, stat_type="receiving").to_pandas()
+    ngs = ngs[ngs.season.isin(seasons)]
+    log.info("NGS receiving %s: %d rows", seasons, len(ngs))
+
+    engine = get_engine()
+    upserted = 0
+    async with engine.begin() as conn:
+        known = {r[0] for r in await conn.execute(text("SELECT player_id FROM players"))}
+        for row in ngs.to_dict("records"):
+            pid = f"nfl:{row['player_gsis_id']}"
+            if pid not in known:
+                continue
+            await conn.execute(
+                text(f"""
+                    INSERT INTO ngs_receiving_weekly
+                        (player_id, season, week, {", ".join(NGS_REC_TYPED)}, stats)
+                    VALUES (:pid, :season, :week, {", ".join(f":{c}" for c in NGS_REC_TYPED)},
+                            CAST(:stats AS jsonb))
+                    ON CONFLICT (player_id, season, week) DO UPDATE
+                      SET {", ".join(f"{c} = EXCLUDED.{c}" for c in NGS_REC_TYPED)},
+                          stats = EXCLUDED.stats
+                """),
+                {
+                    "pid": pid, "season": int(row["season"]), "week": int(row["week"]),
+                    **{c: (float(v) if (v := _clean(row.get(c))) is not None else None)
+                       for c in NGS_REC_TYPED},
+                    "stats": _row_json(row),
+                },
+            )
+            upserted += 1
+    log.info("NGS receiving upserted: %d", upserted)
+    return upserted
+
+
 async def main(seasons: list[int]):
     await ingest_game_stats(seasons)
     await ingest_qb_ngs(seasons)
+    await ingest_receiving_ngs(seasons)
 
 
 if __name__ == "__main__":

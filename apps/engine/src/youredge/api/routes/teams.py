@@ -89,15 +89,36 @@ async def _absence(team_id: str, player_id: str, seasons: list[int],
 
         backup = None
         if slot:
+            # Exact-slot backup first; else same position family on the chart
+            # (LCB/RCB/NB are one family — a nickel's next man can be a boundary
+            # CB and vice versa; WR slots are interchangeable labels). Prefer a
+            # candidate whose NGS alignment label matches the absent player's
+            # (slot receiver replaced by the other slot receiver, not the X).
             backup = (await conn.execute(
                 text("""
-                    SELECT d.player_id, p.name, p.position
-                    FROM depth_chart d JOIN players p ON p.player_id = d.player_id
-                    WHERE d.team_id = :tid AND d.pos_grp = :grp AND d.pos_slot = :slot
-                      AND d.pos_rank = :next_rank
+                    WITH me AS (SELECT ngs_position FROM players WHERE player_id = :pid),
+                    family AS (
+                        SELECT d.player_id, d.pos_abb, d.pos_slot, d.pos_rank
+                        FROM depth_chart d
+                        WHERE d.team_id = :tid AND d.pos_grp = :grp AND d.player_id != :pid
+                          AND (d.pos_abb = :abb
+                               OR (:abb IN ('LCB','RCB','NB') AND d.pos_abb IN ('LCB','RCB','NB')))
+                          AND (d.pos_rank > :rank OR d.pos_slot != :slot)
+                    )
+                    SELECT f.player_id, p.name, p.position, p.ngs_position
+                    FROM family f
+                    JOIN players p ON p.player_id = f.player_id
+                    LEFT JOIN me ON true
+                    ORDER BY
+                      (f.pos_slot = :slot AND f.pos_rank = :rank + 1) DESC,
+                      (f.pos_rank > :rank) DESC,
+                      (p.ngs_position IS NOT DISTINCT FROM me.ngs_position) DESC,
+                      f.pos_rank,
+                      abs(f.pos_slot - :slot)
+                    LIMIT 1
                 """),
-                {"tid": team_id, "grp": slot["pos_grp"], "slot": slot["pos_slot"],
-                 "next_rank": slot["pos_rank"] + 1},
+                {"tid": team_id, "pid": player_id, "grp": slot["pos_grp"],
+                 "abb": slot["pos_abb"], "slot": slot["pos_slot"], "rank": slot["pos_rank"]},
             )).mappings().first()
 
         backup_profile = None
@@ -117,6 +138,39 @@ async def _absence(team_id: str, player_id: str, seasons: list[int],
         "onoff": onoff,
         "backup": backup_profile,
     }
+
+
+@router.get("/teams/{team_id}/offense/receiver-alignment")
+async def receiver_alignment(team_id: str, seasons: list[int] = Query(default=DEFAULT_SEASONS)):
+    """Team pass production split by target's NGS alignment label (SLOT_WR vs
+    WR vs TE...). Labels are the player's current primary alignment per NGS
+    tracking — historical targets are attributed to today's label, and per-snap
+    alignment percentages would need licensed (PFF) data."""
+    async with get_engine().connect() as conn:
+        rows = (await conn.execute(
+            text("""
+                SELECT coalesce(p.ngs_position, p.position, 'UNKNOWN') AS alignment,
+                       count(*) AS targets,
+                       round(avg(pl.complete_pass::int)::numeric, 4) AS catch_rate,
+                       round(avg(pl.epa)::numeric, 4) AS epa_per_target,
+                       round(avg(pl.success::int)::numeric, 4) AS success_rate,
+                       round(avg(pl.air_yards)::numeric, 2) AS adot,
+                       round((count(*)::numeric / sum(count(*)) OVER ()), 4) AS target_share
+                FROM plays pl
+                JOIN games g ON g.game_id = pl.game_id
+                LEFT JOIN players p ON p.player_id = 'nfl:' || pl.receiver_player_id
+                WHERE g.league = 'nfl' AND g.season = ANY(:seasons)
+                  AND pl.posteam_id = :tid AND pl.play_type = 'pass'
+                  AND pl.receiver_player_id IS NOT NULL
+                GROUP BY 1 HAVING count(*) >= 10
+                ORDER BY targets DESC
+            """),
+            {"tid": team_id, "seasons": seasons},
+        )).mappings().all()
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"no targets found for {team_id}")
+    return {"team_id": team_id, "seasons": seasons,
+            "by_alignment": [dict(r) for r in rows]}
 
 
 @router.get("/teams/{team_id}/defense/absence")

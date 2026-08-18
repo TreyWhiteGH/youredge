@@ -33,7 +33,8 @@ def _load_player_pool(current_season: int) -> pd.DataFrame:
     players = nfl.load_players().to_pandas()
     players = players[
         (players.last_season >= MIN_LAST_SEASON) & players.gsis_id.notna()
-    ][["gsis_id", "display_name", "first_name", "last_name", "position", "latest_team", "espn_id", "pfr_id"]]
+    ][["gsis_id", "display_name", "first_name", "last_name", "position", "latest_team",
+       "espn_id", "pfr_id", "ngs_position"]]
     log.info("nflverse players (last_season >= %s): %d", MIN_LAST_SEASON, len(players))
 
     rosters = nfl.load_rosters(seasons=[current_season]).to_pandas()
@@ -54,6 +55,7 @@ def _load_player_pool(current_season: int) -> pd.DataFrame:
         "latest_team": new.team,
         "espn_id": new.espn_id if "espn_id" in new.columns else None,
         "pfr_id": new.pfr_id if "pfr_id" in new.columns else None,
+        "ngs_position": new.ngs_position if "ngs_position" in new.columns else None,
     })
     return pd.concat([players.reset_index(), additions], ignore_index=True)
 
@@ -71,18 +73,20 @@ async def ingest_players(current_season: int = 2026) -> int:
             team_id = f"nfl:{p.latest_team}" if pd.notna(p.latest_team) else None
             await conn.execute(
                 text("""
-                    INSERT INTO players (player_id, league, team_id, name, position)
-                    VALUES (:pid, 'nfl', :team, :name, :pos)
+                    INSERT INTO players (player_id, league, team_id, name, position, ngs_position)
+                    VALUES (:pid, 'nfl', :team, :name, :pos, :ngs_pos)
                     ON CONFLICT (player_id) DO UPDATE
                       SET team_id = EXCLUDED.team_id,
                           name = EXCLUDED.name,
-                          position = EXCLUDED.position
+                          position = EXCLUDED.position,
+                          ngs_position = COALESCE(EXCLUDED.ngs_position, players.ngs_position)
                 """),
                 {
                     "pid": f"nfl:{p.gsis_id}",
                     "team": team_id if team_id in known_teams else None,
                     "name": p.display_name,
                     "pos": p.position if pd.notna(p.position) else None,
+                    "ngs_pos": p.ngs_position if pd.notna(p.ngs_position) else None,
                 },
             )
             for source, val in (("espn", p.espn_id), ("pfr", p.pfr_id)):

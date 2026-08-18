@@ -23,6 +23,9 @@ EXTRACTED = [
     "yards_gained", "epa", "wp", "score_differential",
     "passer_player_id", "rusher_player_id", "receiver_player_id",
     "home_team", "away_team", "season", "week", "season_type",
+    "complete_pass", "interception", "touchdown", "air_yards", "yards_after_catch",
+    "qb_dropback", "qb_scramble", "pass_location", "run_location",
+    "wpa", "success", "field_goal_result",
 ]
 
 PLAY_COLS = [
@@ -30,7 +33,16 @@ PLAY_COLS = [
     "posteam_id", "defteam_id", "down", "ydstogo", "yardline_100", "play_type",
     "yards_gained", "epa", "wp", "score_differential",
     "passer_player_id", "rusher_player_id", "receiver_player_id",
+    "complete_pass", "interception", "touchdown", "air_yards", "yards_after_catch",
+    "qb_dropback", "qb_scramble", "pass_location", "run_location",
+    "wpa", "success", "field_goal_result",
 ]
+# Re-runs refresh these in place (they were added after the first backfill).
+ENRICH_COLS = PLAY_COLS[18:]
+
+
+def _b(v):
+    return None if pd.isna(v) else bool(v)
 
 
 def _i(v):
@@ -108,6 +120,11 @@ async def ingest_season(season: int) -> int:
                 _s(p.play_type), _f(p.yards_gained),
                 _f(p.epa), _f(p.wp), _i(p.score_differential),
                 _s(p.passer_player_id), _s(p.rusher_player_id), _s(p.receiver_player_id),
+                _b(p.complete_pass), _b(p.interception), _b(p.touchdown),
+                _f(p.air_yards), _f(p.yards_after_catch),
+                _b(p.qb_dropback), _b(p.qb_scramble),
+                _s(p.pass_location), _s(p.run_location),
+                _f(p.wpa), _b(p.success), _s(p.field_goal_result),
             ))
 
         raw_conn = await conn.get_raw_connection()
@@ -118,14 +135,20 @@ async def ingest_season(season: int) -> int:
                 drive_num INT, posteam_id TEXT, defteam_id TEXT, down INT, ydstogo INT,
                 yardline_100 INT, play_type TEXT, yards_gained REAL, epa REAL, wp REAL,
                 score_differential INT, passer_player_id TEXT, rusher_player_id TEXT,
-                receiver_player_id TEXT
+                receiver_player_id TEXT,
+                complete_pass BOOLEAN, interception BOOLEAN, touchdown BOOLEAN,
+                air_yards REAL, yards_after_catch REAL,
+                qb_dropback BOOLEAN, qb_scramble BOOLEAN,
+                pass_location TEXT, run_location TEXT,
+                wpa REAL, success BOOLEAN, field_goal_result TEXT
             ) ON COMMIT DROP
         """)
         await apg.copy_records_to_table("_plays_stage", records=records, columns=PLAY_COLS)
         tag = await apg.execute(f"""
             INSERT INTO plays ({", ".join(PLAY_COLS)})
             SELECT {", ".join(PLAY_COLS)} FROM _plays_stage
-            ON CONFLICT (game_id, source_play_id) DO NOTHING
+            ON CONFLICT (game_id, source_play_id) DO UPDATE
+              SET {", ".join(f"{c} = EXCLUDED.{c}" for c in ENRICH_COLS)}
         """)
         inserted = int(tag.split()[-1])
     return inserted

@@ -45,7 +45,7 @@ PROMOTED = {
     "snaps": ["snap_counts_offense", "snap_counts_defense", "snap_counts_total",
               "snap_counts_block", "snap_counts_pass_block", "snap_counts_run_block",
               "snap_counts_coverage", "snap_counts_pass_rush", "snap_counts_run_defense",
-              "snap_counts_run", "snaps", "total_snaps", "passing_snaps", "routes",
+              "snap_counts_run", "coverage_snaps", "snaps", "total_snaps", "passing_snaps", "routes",
               "attempts", "dropbacks", "snap_counts_pass_play", "snap_counts_run_play"],
     "slot_rate": ["slot_rate", "slot_snaps_pct", "pct_slot"],
     "wide_rate": ["wide_rate", "wide_snaps_pct", "pct_wide"],

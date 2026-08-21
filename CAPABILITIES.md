@@ -1,9 +1,9 @@
 # YourEdge — Data & Capability Reference
 
-*As of 2026-08-18. The audience for this doc is both humans and the Phase-3 LLM layer:
-every table and endpoint below is a tool the Narrator/Planner can query, and the "AI
-context" notes say when it should reach for each one. The core contract holds
-everywhere: **the Engine computes every number; the LLM selects and explains.***
+*Updated 2026-08-21. Written for humans and for the Phase-3 LLM layer: every table
+and endpoint below is a tool the Narrator/Planner can query, and the "AI context"
+notes say when to reach for each. The core contract holds everywhere: **the Engine
+computes every number; the LLM selects and explains.***
 
 ---
 
@@ -13,76 +13,88 @@ everywhere: **the Engine computes every number; the LLM selects and explains.***
 
 | Table | Rows | What it is |
 |---|---|---|
-| `teams` | 280 | Canonical teams, both leagues. `team_id` like `nfl:BAL`, `ncaaf:59`. Real names ("Baltimore Ravens"). |
-| `players` | 4,618 | NFL players active 2023+ plus all current-season roster players. `player_id` = `nfl:<gsis_id>`. Carries `position`, current `team_id`, and `ngs_position` — NGS's tracking-derived primary alignment (`SLOT_WR`, `SLOT_CB`, `HIGH_SAFETY`). |
-| `entity_xwalk` | 21,370 | The translation table between external ID systems and canonical IDs. Sources: `cfbd` (game/team ids), `odds_api` (event ids, cached resolutions), `cfbd_alias` + `nflverse_alias` (normalized name aliases), `espn` + `pfr` (player id dialects). |
+| `teams` | 280 | Canonical teams, both leagues. `team_id` like `nfl:BAL`, `ncaaf:59`. |
+| `players` | 4,619 | NFL players active 2023+ plus current rosters. `player_id` = `nfl:<gsis_id>`. Carries `position`, `team_id`, and `ngs_position` (NGS tracking-derived alignment: `SLOT_WR`, `SLOT_CB`, `HIGH_SAFETY`). |
+| `entity_xwalk` | 25,780 | Translation between external ID systems and canonical IDs. Sources: `cfbd`, `odds_api`, `cfbd_alias`/`nflverse_alias` (normalized names), `espn`, `pfr`, `pff`. |
 
-**AI context:** the LLM never invents an identifier. User says "Lamar" → `/players?q=` (backed by the alias xwalk) → canonical id → every other surface keys off it. When a new odds feed or live-score source appears, it becomes a new `source` here and nothing downstream changes. If the crosswalk can't resolve something, the honest answer is "we can't link this," never a guess.
+**AI context:** never invent an identifier. "Lamar" → `/players?q=` → canonical id → every other surface keys off it. Player IDs resolve *exactly* via `pff`/`espn` crosswalk rows, which is what keeps QB Josh Allen distinct from the Jaguars linebacker. If the crosswalk can't resolve something, the answer is "we can't link this," never a guess.
 
 ### Games & play-by-play
 
 | Table | Rows | What it is |
 |---|---|---|
-| `games` | 4,777 | Both leagues, 2023–2025 complete (incl. playoffs/CFP) plus full 2026 schedules. `season_type` separates postseason (CFBD files its whole postseason under week 1); `notes` names bowls/CFP rounds (filter `ILIKE 'CFP%' OR ILIKE 'College Football Playoff%'`). |
-| `plays` | 635,436 | The modeling foundation. NFL rows are enriched: `epa`, `wpa`, `success`, `complete_pass`, `interception`, `touchdown`, `air_yards`, `yards_after_catch`, `qb_dropback`, `qb_scramble`, `pass_location`, `run_location`, `field_goal_result`, score state, clock. NCAAF rows carry `ppa` (CFBD's EPA analog — different scale, never mix leagues in one aggregate) and no per-play player ids yet. |
+| `games` | 4,777 | Both leagues, 2023–2025 complete (incl. playoffs/CFP) plus 2026 schedules. `season_type` separates postseason; `notes` names bowls/CFP rounds (filter `ILIKE 'CFP%' OR ILIKE 'College Football Playoff%'`). |
+| `plays` | 635,436 | The modeling foundation. NFL rows enriched: `epa`, `wpa`, `success`, `complete_pass`, `interception`, `touchdown`, `air_yards`, `yards_after_catch`, `qb_dropback`, `qb_scramble`, `pass_location`, `run_location`, `field_goal_result`, score state, clock. NCAAF rows carry `ppa` (CFBD's EPA analog — different scale, never mix leagues in one aggregate). |
 
-**AI context:** every tendency, clutch metric, script prior, and (soon) sim input is computed **from** this table — the LLM should never quote a stat that doesn't trace here or to an official aggregate. For hypothesis testing (Mode 3), this is where claims get checked: "does NY's run defense actually fade in Q4?" is a query over `plays`, not an opinion.
+**AI context:** every tendency, clutch metric, and script prior computes **from** this table — never quote a stat that doesn't trace here or to an official aggregate. Mode 3 hypothesis testing ("does NY's run defense fade in Q4?") is a query over `plays`, not an opinion.
 
 ### Odds
 
 | Table | Rows | What it is |
 |---|---|---|
-| `markets` | 23,329 | A book's priced question per game: `(game_id, bookmaker, market_key, player_id)`. Books: DK/FD/MGM/Caesars/Pinnacle live via The Odds API; `cfbd:*` historical closing lines. |
-| `odds_snapshots` | 53,726 | Time series of prices per market outcome. `implied_prob` (with vig) **and** `fair_prob` (de-vigged, filled automatically) — 2023–25 NCAAF closing lines + 2026 openers, growing every poll. Unique on `(market_id, captured_at, outcome)` so re-ingests can't duplicate. |
+| `markets` | 23,329 | A book's priced question per game: `(game_id, bookmaker, market_key, player_id)`. DK/FD/MGM/Caesars/Pinnacle live; `cfbd:*` historical closing lines. |
+| `odds_snapshots` | 53,726 | Price time series. `implied_prob` (with vig) **and** `fair_prob` (de-vigged automatically). Unique on `(market_id, captured_at, outcome)` so re-ingests can't duplicate. |
 
-**AI context:** the twin columns are the point. Edge = model probability − `fair_prob`, never − `implied_prob` (that overstates edge by the vig). Snapshot history = line movement, which is CLV's raw material and a narratable fact ("this spread moved 6.5 → 4.5 since July"). All current odds events resolve to canonical games (100% both leagues), so odds join cleanly to everything else.
+**AI context:** the twin columns are the point. Edge = model probability − `fair_prob`, never − `implied_prob` (that overstates edge by the vig). Snapshot history = line movement, which is CLV's raw material and a narratable fact. All odds events resolve to canonical games (100% both leagues).
 
 ### Player performance
 
 | Table | Rows | What it is |
 |---|---|---|
-| `player_game_stats` | 56,982 | Weekly game logs 2023–2025 from nflverse official stats. Typed: attempts/completions/yards/TDs/INTs/sacks, `passing_epa`, `passing_cpoe`, carries, targets/receptions, `target_share`, `air_yards_share`, `wopr`. **Full source row in `stats` JSONB** — including all `def_*` box stats — so nothing is lost. Every row linked to its canonical `game_id`. |
-| `qb_ngs_weekly` | 1,839 | Next Gen Stats passing: `avg_time_to_throw`, `avg_intended_air_yards`, `aggressiveness`, CPOE, passer rating. Week 0 = season aggregate. |
-| `ngs_receiving_weekly` | 4,310 | NGS receiving: `avg_cushion`, `avg_separation`, aDOT, share of intended air yards, catch %, YAC over expected. Cushion/separation are alignment-diagnostic. |
-| `snap_counts` | 79,649 | Per player per game: offense/defense/ST snaps and %, plus `team_id` (players move). The availability record behind on/off analysis. |
-| `depth_chart` | 3,208 | Latest snapshot (refreshed per ingest, `as_of` stamped). `pos_rank` 1 = starter. Defense has an explicit `NB` (nickel/slot) slot. |
-| `pff_player_stats` | 0 (scaffold ready) | PFF Premium CSV drops: typed `slot_rate`/`snaps`/`grade` + full row JSONB. Unlocks OL/DL measurement, true alignment %, coverage-allowed stats, QB pressure splits. |
+| `player_game_stats` | 56,982 | Weekly game logs 2023–2025. Typed: attempts/completions/yards/TDs/INTs/sacks, `passing_epa`, `passing_cpoe`, carries, targets, `target_share`, `air_yards_share`, `wopr`. Full source row in `stats` JSONB (incl. all `def_*` box stats). Every row linked to canonical `game_id`, and carries `opponent_team_id`. |
+| `qb_ngs_weekly` | 1,839 | Next Gen Stats passing: time-to-throw, intended air yards, aggressiveness, CPOE. Week 0 = season aggregate. |
+| `ngs_receiving_weekly` | 4,310 | NGS receiving: cushion, separation, aDOT, air-yards share, YAC over expected. |
+| `snap_counts` | 79,649 | Per player per game: offense/defense/ST snaps and %, plus `team_id`. The availability record behind on/off analysis. |
+| `depth_chart` | 3,208 | Latest snapshot (`as_of` stamped). `pos_rank` 1 = starter. Defense has an explicit `NB` (nickel/slot) slot. |
+| `pff_player_stats` | **359,513** | 22 PFF facets × 2023–2025 × season + every week (incl. playoffs). Typed: `snaps`, `slot_rate`, `wide_rate`, `inline_rate`, `routes`, `yprr`, `grade`. Complete export row in `stats` JSONB with a GIN index. Weekly rows carry `game_id` — **100% linked**. |
 
-**AI context:** game logs answer "how has X actually performed" with official numbers — quote these, not sums over play-by-play (which drop official scoring nuances). Target share + air-yards share are the prop layer's usage inputs: sim team volume × player share = prop distribution. QB traits let the Narrator characterize *style* ("quick-release, low aDOT") with tracking data instead of vibes. Snap counts + depth chart power "who plays, who's next" — and injury gating is a suppress/flag rule, never speculation.
+**AI context:** game logs answer "how has X performed" with official numbers — quote these, not sums over play-by-play. Target share + air-yards share are the prop layer's usage inputs. PFF is the layer free data can't reach: true alignment percentages, offensive-line measurement, coverage-allowed stats, and pressure splits. Snap counts + depth chart power "who plays, who's next"; injuries gate recommendations, they are never speculated about.
 
-### Tagging & memory (Phase 3 surfaces, schema live now)
+**PFF facets loaded:** `passing`, `passing_depth`, `passing_pressure`, `passing_concept`, `time_in_pocket`, `allowed_pressure`, `receiving`, `receiving_depth`, `receiving_concept`, `receiving_scheme`, `rushing`, `blocking`, `pass_blocking`, `run_blocking`, `defense`, `pass_rush`, `run_defense`, `coverage`, `coverage_scheme`, `slot_coverage`, `prp`, `field_goals`.
+
+### Tagging & memory (Phase 3 surfaces, schema live)
 
 | Table | Rows | What it is |
 |---|---|---|
-| `tags` | 33 | The controlled vocabulary: script tags (`SHOOTOUT`, `GARBAGE_TIME_PASS`…), leg roles (`ANCHOR`, `REDUNDANT`…), angles (`Q4`, `HOME_DOG`…), outcomes (`PROCESS_WIN`, `VARIANCE_LOSS`…). |
-| `taggings` | 0 yet | Polymorphic: anything (game, leg, bet, angle, debrief) can carry tags with weights. `game_scripts` view = top script tags per game ranked by sim probability. |
-| `user_bets` | 0 yet | Every bet through BetLab: legs, price at rec time, engine's fair prob, closing price (CLV), result. Bettor Memory's substrate. |
+| `tags` | 33 | Controlled vocabulary: script tags (`SHOOTOUT`, `GARBAGE_TIME_PASS`…), leg roles (`ANCHOR`, `REDUNDANT`…), angles (`Q4`, `HOME_DOG`…), outcomes (`PROCESS_WIN`, `VARIANCE_LOSS`…). |
+| `taggings` | 0 yet | Polymorphic: anything taggable with weights. `game_scripts` view = top script tags per game. |
+| `user_bets` | 0 yet | Every BetLab bet: legs, price at rec time, fair prob, closing price (CLV), result. |
 
-**AI context:** this is the shared language between LLM and Engine. The LLM **selects from** `tags` at runtime — never invents one mid-conversation. A parsed hypothesis becomes a Script Spec in these tags; the engine answers in the same vocabulary; debriefs and coaching join on them ("you're 1–7 on SHOOTOUT scripts").
+**AI context:** the shared language between LLM and Engine. The LLM **selects from** `tags` at runtime — never invents one mid-conversation. Parsed hypotheses become Script Specs in these tags; debriefs and coaching join on them.
 
 ---
 
-## 2. API endpoints (`http://localhost:8000`, interactive docs at `/docs`)
+## 2. API endpoints (`localhost:8000`, interactive docs at `/docs`)
 
-### Live now
+All prefixed `/api/football`.
 
-| Endpoint | Returns | AI context — when to reach for it |
-|---|---|---|
-| `GET /api/football/health` | status + db check | Preflight. |
-| `GET /api/football/tendencies/pass-rate?team_id=` | Team vs league pass rate per (quarter × score state) cell, with deltas and sample sizes | Script priors: "BAL goes run-heavy protecting leads (−10pp vs league)" grounds a `CLOCK_KILL` lean. Respect `team_plays` before trusting a cell. |
-| `GET /api/football/players?q=` | Name search, alias-normalized (`tj watt` → T.J. Watt) | Entity resolution for any user mention of a player. |
-| `GET /api/football/players/{id}` | Bio + per-season aggregates (+ NGS traits for QBs) | The "who is this player" card; official season numbers to quote. |
-| `GET /api/football/players/{id}/gamelog` | Weekly rows, each tied to a canonical game | Recent form, consistency vs volatility for prop framing ("cleared 250.5 in 9 of 17"). |
-| `GET /api/football/players/{id}/plays` | Enriched play log with role, EPA, WPA, air yards | Drill-down evidence: the actual plays behind a claim. |
-| `GET /api/football/players/{id}/clutch` | QB-only: late&close EPA/dropback vs own baseline & league, two-minute drill, clutch-drive score rate, `small_sample` flag | Crunch-time framing with honest baselines: league QBs collapse to 0.018 EPA/dropback late-and-close; a QB holding 0.11 is a real signal — **if** the flag says the sample is real. |
-| `GET /api/football/teams/{id}/offense` | Unit card: pass/run EPA, success, explosive, INT rate, red-zone TD rate, late&close — all with league ranks | Matchup table-setting ("4th pass offense vs 26th late-game defense") and sim priors. |
-| `GET /api/football/teams/{id}/defense` | Mirror card, allowed side | Same, defensive side. Splits like "elite early, 26th in late&close EPA allowed" motivate `BACKDOOR` scripts. |
-| `GET /api/football/teams/{id}/offense/receiver-alignment` | Pass production by target's alignment label (targets, catch rate, EPA/target, aDOT, target share) | Where a passing game lives (slot vs outside vs TE) — feeds matchup logic once coverage data lands. |
-| `GET /api/football/teams/{id}/{offense\|defense}/absence?player_id=` | On/off splits (unit EPA with vs without the player), depth slot, next-man-up with production profile | The injury-impact story: "PIT allows +0.116 EPA/dropback without Watt; Herbig steps in (16 sacks, 44% snap share)." **Correlational** — always relay the sample sizes; distrust confounded cases (see Jefferson caveat below). |
+### Players
 
-### Stubs awaiting Phases 1–3 (return 501 with phase marker)
+| Endpoint | AI context — when to use it |
+|---|---|
+| `GET /players?q=` | Entity resolution for any player mention. Alias-normalized (`tj watt` → T.J. Watt). |
+| `GET /players/{id}` | Bio, per-season aggregates, PFF grades, NGS traits (QBs). The "who is this" card. |
+| `GET /players/{id}/gamelog` | Weekly rows, each tied to a canonical game. Recent form, consistency vs volatility for prop framing. |
+| `GET /players/{id}/vs-opponent` | Splits by opponent (`?opponent=nfl:MIA`, `?include_games=true`). **Samples are tiny** — `games` ships with every rate; weight accordingly. |
+| `GET /players/{id}/plays` | Enriched play log with role, EPA, WPA, air yards. Drill-down evidence behind a claim. |
+| `GET /players/{id}/clutch` | QB-only: late&close EPA/dropback vs own baseline *and* league, two-minute drill, clutch-drive score rate, `small_sample` flag. |
+| `GET /players/{id}/pff` | PFF rows by `facet`/`seasons`/`weekly`. Typed headliners + complete export row. |
+| `GET /players/{id}/pff/splits` | **Split facets as `{split: {metric: value}}`** — pressure vs clean, 16 depth×direction zones, man vs zone, play-action vs not. Narrow with `metrics=`. This is how the LLM reaches 558-column tables without knowing column names. |
 
-`GET /odds` · `POST /sgp/generate` · `/sgp/build-around-pick` · `/sgp/test-hypothesis` · `/sgp/critique` · `/sgp/save` · `GET /sgp/history` — the four BetLab modes; thin LLM layers over the sim + pricing engine once Phases 1–2 land.
+### Teams
+
+| Endpoint | AI context |
+|---|---|
+| `GET /teams/{id}/offense` · `/defense` | Unit cards: pass/run EPA, success, explosive, INT rate, red-zone TD rate, late&close — with league ranks. Matchup table-setting and sim priors. |
+| `GET /teams/{id}/units` | **PFF unit grades** (snap-weighted + rank): pass/run blocking, pass rush, run defense, coverage, receiving, rushing. Pass protection has no free-data equivalent. |
+| `GET /teams/{id}/protection` | Unit pressure rate allowed + per-lineman rows (pressures/sacks/hurries/hits, true-pass-set grade). `pressure_rate_allowed` is **ours** (pressures ÷ pass-block snaps), not PFF's proprietary PBE. |
+| `GET /teams/{id}/offense/receiver-alignment` | Pass production by target alignment (targets, catch rate, EPA/target, aDOT, share). |
+| `GET /teams/{id}/{offense\|defense}/absence?player_id=` | On/off unit splits, depth slot, next-man-up chosen by PFF slot-rate proximity, plus starter-vs-backup grade dropoff. **Correlational** — relay sample sizes. |
+| `GET /tendencies/pass-rate?team_id=` | Team vs league pass rate per (quarter × score state), with deltas and sample sizes. Script priors. |
+
+### Stubs awaiting Phases 1–3 (501 with phase marker)
+
+`GET /odds` · `POST /sgp/generate` · `/sgp/build-around-pick` · `/sgp/test-hypothesis` · `/sgp/critique` · `/sgp/save` · `GET /sgp/history`
 
 ---
 
@@ -90,37 +102,44 @@ everywhere: **the Engine computes every number; the LLM selects and explains.***
 
 | Command | What it does |
 |---|---|
-| `make up` / `make down` / `make health` / `make psql` | Stack lifecycle (Postgres 16 + Redis + FastAPI engine). |
-| `make ingest-nfl` | nflverse PBP 2023–2025, enriched columns, idempotent (re-run refreshes in place). |
-| `make ingest-cfbd` | CFBD NCAAF games/plays/lines via canonical mapping (`--season-type postseason --week 1` for bowls/CFP). |
-| `make schedules` | 2026 schedules both leagues + CFBD team alias table. Required for odds event resolution. |
-| `make ingest-players` | Player master + current rosters + espn/pfr/name-alias xwalk rows. |
-| `make ingest-snaps` | Snap counts 2023–2025 + latest depth charts. |
-| `make poll-odds` | One odds snapshot pass, 5 books, both leagues; resolves events, de-vigs inline. Loop mode for the 30-min pregame cadence. |
+| `make up` / `down` / `health` / `psql` | Stack lifecycle (Postgres 16 + Redis + FastAPI engine). |
+| `make ingest-nfl` | nflverse PBP 2023–2025, enriched, idempotent (re-run refreshes in place). |
+| `make ingest-cfbd` | CFBD NCAAF games/plays/lines (`--season-type postseason --week 1` for bowls/CFP). |
+| `make schedules` | 2026 schedules both leagues + CFBD team aliases. Required for odds resolution. |
+| `make ingest-players` | Player master + rosters + espn/pfr/pff/name-alias xwalk rows. |
+| `make ingest-snaps` | Snap counts + latest depth charts. |
+| `make ingest-pff` | Parse PFF drops from `data/pff/` (CSV or harvested JSON). |
+| `make poll-odds` | One odds pass, 5 books, both leagues; resolves events, de-vigs inline. |
 | `make devig` | Backfill `fair_prob` on any snapshot group missing it. |
-| `make ingest-pff` | Parse PFF CSV drops from `data/pff/` (see §4). |
 | `python -m youredge.ingest.player_stats --seasons …` | Game logs + QB/receiving NGS. |
 
-## 4. External sources & credentials
+**PFF refresh (in-season):** the facet API is reachable from a logged-in `premium.pff.com` tab; the harvester posts JSON to `/api/football/pff-drop`, files land in `data/pff/` named `<facet>_<season>[_wk<N>].json`, then `make ingest-pff`. PFF postseason weeks (28/29/30/32) map to canonical 19–22 automatically.
+
+## 4. External sources
 
 | Source | Auth | Used for | Cost |
 |---|---|---|---|
-| nflverse (nflreadpy) | none | NFL PBP, schedules, players, rosters, weekly stats, NGS, snap counts, depth charts | Free |
-| CFBD | `CFBD_API_KEY` | NCAAF games/plays/lines, schedules, team metadata (1k calls/mo free; each week = 3 calls) | Free → $10/mo |
-| The Odds API | `ODDS_API_KEY` | Live odds 5 books, both leagues (~20k credits/mo remaining) | Dev tier now |
-| PFF (planned) | manual CSV export, PFF+ sub | OL/DL grades, true slot %, coverage-allowed, pressure splits | ~$40/mo |
+| nflverse (nflreadpy) | none | NFL PBP, schedules, players, rosters, weekly stats, NGS, snaps, depth charts | Free |
+| CFBD | `CFBD_API_KEY` | NCAAF games/plays/lines, schedules, team metadata | Free → $10/mo |
+| The Odds API | `ODDS_API_KEY` | Live odds, 5 books, both leagues | Dev tier |
+| PFF Premium | browser session | Grades, alignment %, coverage, protection, pressure splits | ~$40/mo |
 | Anthropic | `ANTHROPIC_API_KEY` | Phase-3 Narrator/Planner | usage |
 
-## 5. Honest caveats the AI layer must inherit
+## 5. Caveats the AI layer must inherit
 
-- **On/off is correlational.** Sample sizes ship with every response; small `off` samples (stars rarely sit) and confounds (Jefferson's split blames him for 2023 QB chaos) mean the Narrator should present deltas as evidence, not verdicts.
-- **Unit cards are raw, not opponent-adjusted.** Rankings are honest at the "top-5 / bottom-5" grain; adjacent ranks are noise. Opponent adjustment is a Phase-2 refinement.
-- **`ngs_position` is a primary-alignment label, not a % —** and historical targets inherit a player's *current* label. True per-snap alignment needs the PFF feed.
-- **NCAAF plays have no player ids yet** (CFBD REST omits them) — NCAAF is game-markets-first, per roadmap.
-- **Scrambles count as runs** in pass-rate tendencies (nflverse convention); dropback-based metrics use `qb_dropback` and don't have this issue.
-- **Clutch-drive scoring** can miscount a rare fumble-return TD as drive success until a drive-outcome column exists.
-- **Injuries gate, never narrate:** the engine suppresses/flags legs on injury status; the LLM must not speculate about injuries.
+- **On/off is correlational.** Sample sizes ship with every response. Small `off` samples (stars rarely sit) and confounds (Jefferson's split blames him for 2023 QB chaos) mean deltas are evidence, not verdicts.
+- **Unit cards are raw, not opponent-adjusted.** Honest at the top-5/bottom-5 grain; adjacent ranks are noise.
+- **vs-opponent samples are tiny** — 5–6 games for divisional foes, 1–2 for everyone else. "He torches Miami" is usually a sampling story.
+- **`ngs_position` is a label; PFF `slot_rate` is the real percentage.** Prefer the latter. Historical targets inherit a player's *current* NGS label.
+- **`pressure_rate_allowed` is ours**, not PFF's Pass Blocking Efficiency.
+- **NCAAF plays have no player ids** (CFBD REST omits them) — NCAAF is game-markets-first.
+- **Scrambles count as runs** in pass-rate tendencies (nflverse convention); `qb_dropback` metrics don't have this issue.
+- **PFF weeks are PFF's** — postseason numbering is remapped on ingest; don't compare raw week integers across sources.
+- **Split facets have no top-level grade** by design; their data lives in prefixed columns via `/pff/splits`.
+- **Injuries gate, never narrate.**
 
-## 6. What's next (the gap between here and BetLab)
+## 6. What's next
 
-Phase 1 remainder: more tendency surfaces (pace, plays-per-state, red zone, fatigue) → **drive-level Monte Carlo sim** (team tendencies + market-implied strength → joint distributions) → **calibration backtest** vs 2023–25 closing lines. Phase 2: correlation from the sim, SGP pricing vs book quotes, leg diagnostics. Phase 3: the four modes as LLM tool-use over `get_game_data` / `run_simulation` / `price_legs` / `evaluate_parlay` / `find_legs_matching_script`.
+Phase 1 remainder: more tendency surfaces (pace, plays-per-state, red zone, fatigue) → **drive-level Monte Carlo sim** → **calibration backtest** vs 2023–25 closing lines. Phase 2: correlation from the sim, SGP pricing vs book quotes, leg diagnostics. Phase 3: the four modes as LLM tool-use.
+
+**Available now but unbuilt:** template definitions as predicates over the unit/trait data, retro-labeling all 4,777 games into `taggings`, and per-template base rates + CLV records — which fills the two empty tables the architecture already anticipates and gives Mode 3 an honest, sim-free answer before Phase 1 lands.

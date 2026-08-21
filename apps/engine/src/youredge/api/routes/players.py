@@ -3,6 +3,7 @@
 GET /players?q=mahomes                 name search (alias-normalized)
 GET /players/{player_id}               bio + season aggregates (+ NGS if QB)
 GET /players/{player_id}/gamelog       weekly rows from player_game_stats
+GET /players/{player_id}/vs-opponent   splits by opponent (optionally one team)
 GET /players/{player_id}/plays         enriched PBP involving the player
 GET /players/{player_id}/clutch        QB clutch surface (late&close, 2-min, drives)
 """
@@ -180,6 +181,69 @@ async def player_pff(
             {"pid": player_id, "seasons": seasons, **({"facet": facet} if facet else {})},
         )).mappings().all()
     return {"player_id": player_id, "rows": [dict(r) for r in rows]}
+
+
+@router.get("/players/{player_id}/vs-opponent")
+async def player_vs_opponent(
+    player_id: str,
+    opponent: str | None = Query(default=None, description="canonical team id, e.g. nfl:MIA"),
+    seasons: list[int] = Query(default=DEFAULT_SEASONS),
+    include_games: bool = Query(default=False, description="list the individual games"),
+):
+    """Career-to-date splits against each opponent (or one opponent).
+
+    Small samples are the norm here — divisional foes reach 5-6 games over three
+    seasons, everyone else 1-2 — so games is returned alongside every rate and
+    callers should weight accordingly rather than quoting a 1-game average.
+    """
+    async with get_engine().connect() as conn:
+        bio = await _player_or_404(conn, player_id)
+        rows = (await conn.execute(
+            text("""
+                SELECT s.opponent_team_id, t.name AS opponent_name,
+                       count(*) AS games,
+                       sum(s.attempts) AS attempts, sum(s.completions) AS completions,
+                       sum(s.passing_yards) AS passing_yards, sum(s.passing_tds) AS passing_tds,
+                       sum(s.passing_interceptions) AS interceptions,
+                       round(avg(s.passing_epa)::numeric, 3) AS passing_epa_per_game,
+                       sum(s.carries) AS carries, sum(s.rushing_yards) AS rushing_yards,
+                       sum(s.rushing_tds) AS rushing_tds,
+                       sum(s.targets) AS targets, sum(s.receptions) AS receptions,
+                       sum(s.receiving_yards) AS receiving_yards,
+                       sum(s.receiving_tds) AS receiving_tds,
+                       round(avg(s.target_share)::numeric, 3) AS avg_target_share
+                FROM player_game_stats s
+                LEFT JOIN teams t ON t.team_id = s.opponent_team_id
+                WHERE s.player_id = :pid AND s.season = ANY(:seasons)
+                  AND (CAST(:opp AS text) IS NULL OR s.opponent_team_id = :opp)
+                GROUP BY 1, 2
+                ORDER BY games DESC, passing_yards DESC NULLS LAST
+            """),
+            {"pid": player_id, "seasons": seasons, "opp": opponent},
+        )).mappings().all()
+
+        games = []
+        if include_games:
+            games = [dict(r) for r in (await conn.execute(
+                text("""
+                    SELECT season, week, season_type, game_id, opponent_team_id,
+                           attempts, completions, passing_yards, passing_tds,
+                           passing_interceptions, carries, rushing_yards, rushing_tds,
+                           targets, receptions, receiving_yards, receiving_tds
+                    FROM player_game_stats
+                    WHERE player_id = :pid AND season = ANY(:seasons)
+                      AND (CAST(:opp AS text) IS NULL OR opponent_team_id = :opp)
+                    ORDER BY season, week
+                """),
+                {"pid": player_id, "seasons": seasons, "opp": opponent},
+            )).mappings()]
+
+    return {
+        **{k: bio[k] for k in ("player_id", "name", "position")},
+        "seasons": seasons,
+        "by_opponent": [dict(r) for r in rows],
+        **({"games": games} if include_games else {}),
+    }
 
 
 @router.get("/players/{player_id}/pff/splits")

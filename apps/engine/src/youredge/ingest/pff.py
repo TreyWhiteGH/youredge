@@ -11,9 +11,11 @@ Column handling: a few known headers are promoted to typed columns (slot rate,
 snaps, grade); EVERY column is preserved in stats JSONB, so shape drift in PFF
 exports never loses data — promote more columns as needed.
 
-Player resolution: PFF exports carry player names + team abbr; resolved via the
-normalized nflverse_alias xwalk with the team as a same-name disambiguator.
-Unresolved rows are logged and skipped, never guessed.
+Player resolution: PFF rows carry PFF's own player_id, which is exactly
+nflverse's pff_id — so resolution is an exact xwalk lookup (source='pff'),
+not a name match. This matters for duplicate names: PFF 46601 is QB Josh
+Allen, never the Jaguars linebacker. Rows without a usable id fall back to
+normalized name + team; anything still unresolved is logged and skipped.
 """
 
 import asyncio
@@ -44,6 +46,17 @@ PROMOTED = {
 NAME_COLS = ["player", "player_name", "name"]
 TEAM_COLS = ["team_name", "team", "franchise"]
 
+# PFF's team abbreviation dialect -> nflverse canonical
+TEAM_ALIASES = {"ARZ": "ARI", "BLT": "BAL", "CLV": "CLE", "HST": "HOU",
+                "SD": "LAC", "OAK": "LV", "SL": "LA"}
+
+
+def _team_id(abbr) -> str | None:
+    if abbr is None or pd.isna(abbr):
+        return None
+    a = str(abbr).upper()
+    return f"nfl:{TEAM_ALIASES.get(a, a)}"
+
 
 def _col(df: pd.DataFrame, candidates: list[str]) -> str | None:
     lower = {c.lower(): c for c in df.columns}
@@ -53,7 +66,8 @@ def _col(df: pd.DataFrame, candidates: list[str]) -> str | None:
     return None
 
 
-async def ingest_file(conn, path: Path, alias_map: dict, team_by_player: dict) -> tuple[int, int]:
+async def ingest_file(conn, path: Path, alias_map: dict, team_by_player: dict,
+                      pff_id_map: dict) -> tuple[int, int]:
     m = FNAME.match(path.name)
     if not m:
         log.warning("skipping %s (name must be <facet>_<season>[_wk<N>].csv)", path.name)
@@ -71,17 +85,27 @@ async def ingest_file(conn, path: Path, alias_map: dict, team_by_player: dict) -
         return 0, 0
     typed_cols = {k: _col(df, v) for k, v in PROMOTED.items()}
 
+    id_col = _col(df, ["player_id", "pff_id"])
+
     upserted = skipped = 0
     for row in df.to_dict("records"):
-        key = normalize_name(str(row[name_col]))
-        pids = alias_map.get(key, [])
-        if len(pids) > 1 and team_col:
-            team = f"nfl:{row[team_col]}"
-            pids = [p for p in pids if team_by_player.get(p) == team] or pids
-        if len(pids) != 1:
-            log.warning("%s: unresolved player %r (%d candidates)", path.name, row[name_col], len(pids))
+        pid = None
+        if id_col is not None and pd.notna(row.get(id_col)):
+            pid = pff_id_map.get(str(int(row[id_col])))
+        if pid is None:
+            key = normalize_name(str(row[name_col]))
+            pids = alias_map.get(key, [])
+            if len(pids) > 1 and team_col:
+                team = _team_id(row[team_col])
+                pids = [p for p in pids if team_by_player.get(p) == team] or pids
+            if len(pids) == 1:
+                pid = pids[0]
+        if pid is None:
+            log.warning("%s: unresolved player %r (pff_id=%s)",
+                        path.name, row[name_col], row.get(id_col))
             skipped += 1
             continue
+        pids = [pid]
 
         def num(col):
             if col is None or pd.isna(row.get(col)):
@@ -103,7 +127,7 @@ async def ingest_file(conn, path: Path, alias_map: dict, team_by_player: dict) -
             """),
             {
                 "pid": pids[0], "season": season, "week": week, "facet": facet,
-                "team": f"nfl:{row[team_col]}" if team_col and pd.notna(row.get(team_col)) else None,
+                "team": _team_id(row.get(team_col)) if team_col else None,
                 "snaps": int(row[typed_cols["snaps"]]) if typed_cols["snaps"] and pd.notna(row.get(typed_cols["snaps"])) else None,
                 "slot": num(typed_cols["slot_rate"]),
                 "wide": num(typed_cols["wide_rate"]),
@@ -118,10 +142,10 @@ async def ingest_file(conn, path: Path, alias_map: dict, team_by_player: dict) -
 
 
 async def main():
-    if not DATA_DIR.exists() or not any(DATA_DIR.glob("*.csv")):
+    if not DATA_DIR.exists() or not any([*DATA_DIR.glob("*.csv"), *DATA_DIR.glob("*.json")]):
         raise SystemExit(
-            f"No CSVs in {DATA_DIR}. Export from PFF Premium Stats and name them "
-            "<facet>_<season>.csv or <facet>_<season>_wk<N>.csv (e.g. receiving_2025.csv)."
+            f"No PFF files in {DATA_DIR}. Drop exports named <facet>_<season>[_wk<N>].csv"
+            " or let the harvester write .json there."
         )
     engine = get_engine()
     async with engine.begin() as conn:
@@ -134,8 +158,13 @@ async def main():
             alias_map.setdefault(normalize_name(name), []).append(pid)
             if team:
                 team_by_player[pid] = team
+        pff_id_map = {r[0]: r[1] for r in await conn.execute(text(
+            "SELECT source_id, canonical_id FROM entity_xwalk "
+            "WHERE entity_type='player' AND source='pff'"))}
+        log.info("pff id map: %d players", len(pff_id_map))
+
         for path in sorted([*DATA_DIR.glob("*.csv"), *DATA_DIR.glob("*.json")]):
-            await ingest_file(conn, path, alias_map, team_by_player)
+            await ingest_file(conn, path, alias_map, team_by_player, pff_id_map)
 
         # Weekly rows -> canonical game via (season, week, team), either side
         await conn.execute(text("""

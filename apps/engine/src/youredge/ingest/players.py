@@ -34,7 +34,7 @@ def _load_player_pool(current_season: int) -> pd.DataFrame:
     players = players[
         (players.last_season >= MIN_LAST_SEASON) & players.gsis_id.notna()
     ][["gsis_id", "display_name", "first_name", "last_name", "position", "latest_team",
-       "espn_id", "pfr_id", "ngs_position"]]
+       "espn_id", "pfr_id", "pff_id", "ngs_position"]]
     log.info("nflverse players (last_season >= %s): %d", MIN_LAST_SEASON, len(players))
 
     rosters = nfl.load_rosters(seasons=[current_season]).to_pandas()
@@ -89,9 +89,9 @@ async def ingest_players(current_season: int = 2026) -> int:
                     "ngs_pos": p.ngs_position if pd.notna(p.ngs_position) else None,
                 },
             )
-            for source, val in (("espn", p.espn_id), ("pfr", p.pfr_id)):
+            for source, val in (("espn", p.espn_id), ("pfr", p.pfr_id), ("pff", p.pff_id)):
                 if pd.notna(val):
-                    sid = str(int(val)) if source == "espn" else str(val)
+                    sid = str(val) if source == "pfr" else str(int(val))
                     await conn.execute(
                         text("""
                             INSERT INTO entity_xwalk (entity_type, canonical_id, source, source_id)

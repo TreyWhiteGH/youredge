@@ -76,6 +76,18 @@ async def player_detail(player_id: str, seasons: list[int] = Query(default=DEFAU
         )).mappings().all()
         out = {**bio, "seasons": [dict(r) for r in agg]}
 
+        pff = (await conn.execute(
+            text("""
+                SELECT facet, season, snaps, slot_rate, grade
+                FROM pff_player_stats
+                WHERE player_id = :pid AND week = 0 AND season = ANY(:seasons)
+                ORDER BY season DESC, facet
+            """),
+            {"pid": player_id, "seasons": seasons},
+        )).mappings().all()
+        if pff:
+            out["pff"] = [dict(r) for r in pff]
+
         if bio["position"] == "QB":
             ngs = (await conn.execute(
                 text("""
@@ -141,6 +153,32 @@ async def player_plays(
             {"gsis": gsis, "seasons": seasons, "lim": limit},
         )).mappings().all()
     return {"player_id": player_id, "plays": [dict(r) for r in rows]}
+
+
+@router.get("/players/{player_id}/pff")
+async def player_pff(
+    player_id: str,
+    facet: str | None = Query(default=None, description="e.g. receiving, coverage, pass_blocking"),
+    seasons: list[int] = Query(default=DEFAULT_SEASONS),
+    weekly: bool = Query(default=False, description="False = season rows (week 0) only"),
+):
+    """PFF rows for a player — typed headline numbers plus the complete export
+    row (stats). Weekly rows carry game_id, so PFF context joins play-by-play."""
+    async with get_engine().connect() as conn:
+        await _player_or_404(conn, player_id)
+        rows = (await conn.execute(
+            text(f"""
+                SELECT facet, season, week, game_id, team_id, snaps, slot_rate,
+                       wide_rate, grade, stats
+                FROM pff_player_stats
+                WHERE player_id = :pid AND season = ANY(:seasons)
+                  {"AND facet = :facet" if facet else ""}
+                  {"" if weekly else "AND week = 0"}
+                ORDER BY facet, season, week
+            """),
+            {"pid": player_id, "seasons": seasons, **({"facet": facet} if facet else {})},
+        )).mappings().all()
+    return {"player_id": player_id, "rows": [dict(r) for r in rows]}
 
 
 @router.get("/players/{player_id}/clutch")

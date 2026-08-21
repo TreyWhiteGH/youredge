@@ -135,6 +135,15 @@ async def main():
         for path in sorted(DATA_DIR.glob("*.csv")):
             await ingest_file(conn, path, alias_map, team_by_player)
 
+        # Weekly rows -> canonical game via (season, week, team), either side
+        await conn.execute(text("""
+            UPDATE pff_player_stats s SET game_id = g.game_id
+            FROM games g
+            WHERE s.game_id IS NULL AND s.week > 0 AND g.league = 'nfl'
+              AND g.season = s.season AND g.week = s.week
+              AND s.team_id IN (g.home_team_id, g.away_team_id)
+        """))
+
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)

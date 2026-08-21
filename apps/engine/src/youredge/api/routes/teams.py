@@ -94,9 +94,22 @@ async def _absence(team_id: str, player_id: str, seasons: list[int],
             # CB and vice versa; WR slots are interchangeable labels). Prefer a
             # candidate whose NGS alignment label matches the absent player's
             # (slot receiver replaced by the other slot receiver, not the X).
+            # PFF slot_rate (a real percentage) outranks the binary NGS label
+            # when available: replacing a 69%-slot receiver prefers the next
+            # slot-heavy body, not the X who happens to sit one rank below.
             backup = (await conn.execute(
                 text("""
-                    WITH me AS (SELECT ngs_position FROM players WHERE player_id = :pid),
+                    WITH latest_align AS (
+                        SELECT DISTINCT ON (player_id) player_id, slot_rate
+                        FROM pff_player_stats
+                        WHERE week = 0 AND slot_rate IS NOT NULL AND facet = :align_facet
+                        ORDER BY player_id, season DESC
+                    ),
+                    me AS (
+                        SELECT p.ngs_position, a.slot_rate
+                        FROM players p LEFT JOIN latest_align a ON a.player_id = p.player_id
+                        WHERE p.player_id = :pid
+                    ),
                     family AS (
                         SELECT d.player_id, d.pos_abb, d.pos_slot, d.pos_rank
                         FROM depth_chart d
@@ -105,20 +118,26 @@ async def _absence(team_id: str, player_id: str, seasons: list[int],
                                OR (:abb IN ('LCB','RCB','NB') AND d.pos_abb IN ('LCB','RCB','NB')))
                           AND (d.pos_rank > :rank OR d.pos_slot != :slot)
                     )
-                    SELECT f.player_id, p.name, p.position, p.ngs_position
+                    SELECT f.player_id, p.name, p.position, p.ngs_position,
+                           round(a.slot_rate::numeric, 3) AS slot_rate,
+                           round(me.slot_rate::numeric, 3) AS absent_slot_rate
                     FROM family f
                     JOIN players p ON p.player_id = f.player_id
+                    LEFT JOIN latest_align a ON a.player_id = f.player_id
                     LEFT JOIN me ON true
                     ORDER BY
                       (f.pos_slot = :slot AND f.pos_rank = :rank + 1) DESC,
                       (f.pos_rank > :rank) DESC,
+                      CASE WHEN me.slot_rate IS NOT NULL AND a.slot_rate IS NOT NULL
+                           THEN abs(a.slot_rate - me.slot_rate) END NULLS LAST,
                       (p.ngs_position IS NOT DISTINCT FROM me.ngs_position) DESC,
                       f.pos_rank,
                       abs(f.pos_slot - :slot)
                     LIMIT 1
                 """),
                 {"tid": team_id, "pid": player_id, "grp": slot["pos_grp"],
-                 "abb": slot["pos_abb"], "slot": slot["pos_slot"], "rank": slot["pos_rank"]},
+                 "abb": slot["pos_abb"], "slot": slot["pos_slot"], "rank": slot["pos_rank"],
+                 "align_facet": "receiving" if side == "offense" else "coverage"},
             )).mappings().first()
 
         backup_profile = None
@@ -129,6 +148,26 @@ async def _absence(team_id: str, player_id: str, seasons: list[int],
             )).mappings().first()
             backup_profile = {**dict(backup), **{k: (float(v) if v is not None else None)
                                                  for k, v in dict(prof).items()}}
+            # Dropoff signal: starter vs replacement on PFF's grade scale
+            grades = {r["player_id"]: r for r in (await conn.execute(
+                text("""
+                    SELECT DISTINCT ON (player_id) player_id, season,
+                           grade, yprr, snaps
+                    FROM pff_player_stats
+                    WHERE player_id = ANY(:pids) AND week = 0 AND grade IS NOT NULL
+                      AND season = ANY(:seasons)
+                    ORDER BY player_id, season DESC
+                """),
+                {"pids": [player_id, backup["player_id"]], "seasons": seasons},
+            )).mappings()}
+            if backup["player_id"] in grades or player_id in grades:
+                b, s = grades.get(backup["player_id"]), grades.get(player_id)
+                backup_profile["pff"] = {
+                    "backup_grade": b["grade"] if b else None,
+                    "backup_grade_season": b["season"] if b else None,
+                    "starter_grade": s["grade"] if s else None,
+                    "grade_dropoff": round(b["grade"] - s["grade"], 1) if b and s else None,
+                }
 
     return {
         "team_id": team_id,

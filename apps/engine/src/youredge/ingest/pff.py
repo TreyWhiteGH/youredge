@@ -31,7 +31,7 @@ from youredge.ingest.resolve import normalize_name
 log = logging.getLogger(__name__)
 
 DATA_DIR = Path("/app/data/pff")
-FNAME = re.compile(r"^(?P<facet>[a-z_]+)_(?P<season>\d{4})(?:_wk(?P<week>\d+))?\.csv$")
+FNAME = re.compile(r"^(?P<facet>[a-z_]+)_(?P<season>\d{4})(?:_wk(?P<week>\d+))?\.(?P<ext>csv|json)$")
 
 # Candidate PFF header names per typed column (first match wins, case-insensitive).
 PROMOTED = {
@@ -60,8 +60,10 @@ async def ingest_file(conn, path: Path, alias_map: dict, team_by_player: dict) -
         return 0, 0
     facet, season = m["facet"], int(m["season"])
     week = int(m["week"]) if m["week"] else 0
+    # PFF postseason weeks -> canonical (nflverse) playoff weeks
+    week = {28: 19, 29: 20, 30: 21, 32: 22}.get(week, week)
 
-    df = pd.read_csv(path)
+    df = pd.read_json(path) if m["ext"] == "json" else pd.read_csv(path)
     name_col = _col(df, NAME_COLS)
     team_col = _col(df, TEAM_COLS)
     if name_col is None:
@@ -132,7 +134,7 @@ async def main():
             alias_map.setdefault(normalize_name(name), []).append(pid)
             if team:
                 team_by_player[pid] = team
-        for path in sorted(DATA_DIR.glob("*.csv")):
+        for path in sorted([*DATA_DIR.glob("*.csv"), *DATA_DIR.glob("*.json")]):
             await ingest_file(conn, path, alias_map, team_by_player)
 
         # Weekly rows -> canonical game via (season, week, team), either side

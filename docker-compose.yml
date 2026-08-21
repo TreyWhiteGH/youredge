@@ -43,6 +43,7 @@ services:
       - "8000:8000"
     volumes:
       - ./apps/engine/src:/app/src
+      - ./data:/app/data
     depends_on:
       db:
         condition: service_healthy

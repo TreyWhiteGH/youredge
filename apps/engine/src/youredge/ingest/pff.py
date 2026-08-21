@@ -29,6 +29,7 @@ from sqlalchemy import text
 
 from youredge.db import get_engine
 from youredge.ingest.resolve import normalize_name
+from youredge.pff_splits import derive_splits
 
 log = logging.getLogger(__name__)
 
@@ -44,8 +45,8 @@ PROMOTED = {
     "snaps": ["snap_counts_offense", "snap_counts_defense", "snap_counts_total",
               "snap_counts_block", "snap_counts_pass_block", "snap_counts_run_block",
               "snap_counts_coverage", "snap_counts_pass_rush", "snap_counts_run_defense",
-              "snaps", "total_snaps", "passing_snaps", "routes", "attempts",
-              "dropbacks", "snap_counts_pass_play", "snap_counts_run_play"],
+              "snap_counts_run", "snaps", "total_snaps", "passing_snaps", "routes",
+              "attempts", "dropbacks", "snap_counts_pass_play", "snap_counts_run_play"],
     "slot_rate": ["slot_rate", "slot_snaps_pct", "pct_slot"],
     "wide_rate": ["wide_rate", "wide_snaps_pct", "pct_wide"],
     "inline_rate": ["inline_rate"],
@@ -94,6 +95,22 @@ def _col(df: pd.DataFrame, candidates: list[str]) -> str | None:
     return None
 
 
+def _snap_col(df: pd.DataFrame) -> str | None:
+    """Volume column, falling back to any un-prefixed snap_counts_* column.
+
+    PFF names participation differently in every export and keeps adding
+    facets; the fallback means a new report weights correctly on arrival
+    instead of silently landing NULL snaps.
+    """
+    if col := _col(df, PROMOTED["snaps"]):
+        return col
+    splits = derive_splits(list(df.columns))
+    candidates = [c for c in df.columns
+                  if c.lower().startswith("snap_counts_")
+                  and not any(c.lower().startswith(p + "_") for p in splits)]
+    return max(candidates, key=lambda c: df[c].fillna(0).sum(), default=None)
+
+
 async def ingest_file(conn, path: Path, alias_map: dict, team_by_player: dict,
                       pff_id_map: dict) -> tuple[int, int]:
     m = FNAME.match(path.name)
@@ -112,6 +129,7 @@ async def ingest_file(conn, path: Path, alias_map: dict, team_by_player: dict,
         log.warning("%s: no player-name column found in %s", path.name, list(df.columns)[:8])
         return 0, 0
     typed_cols = {k: _col(df, v) for k, v in PROMOTED.items()}
+    typed_cols["snaps"] = _snap_col(df)
     if (preferred := FACET_GRADE.get(facet)) and (col := _col(df, [preferred])):
         typed_cols["grade"] = col
 

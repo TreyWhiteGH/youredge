@@ -12,6 +12,7 @@ from sqlalchemy import text
 
 from youredge.db import get_engine
 from youredge.ingest.resolve import normalize_name
+from youredge.pff_splits import compare
 from youredge.tendencies.qb_clutch import qb_clutch
 
 router = APIRouter(tags=["players"])
@@ -179,6 +180,35 @@ async def player_pff(
             {"pid": player_id, "seasons": seasons, **({"facet": facet} if facet else {})},
         )).mappings().all()
     return {"player_id": player_id, "rows": [dict(r) for r in rows]}
+
+
+@router.get("/players/{player_id}/pff/splits")
+async def player_pff_splits(
+    player_id: str,
+    facet: str = Query(description="split facet, e.g. passing_pressure, passing_depth"),
+    season: int = Query(default=2025),
+    week: int = Query(default=0, description="0 = season aggregate"),
+    metrics: list[str] | None = Query(default=None, description="narrow to these metrics"),
+):
+    """PFF split facets as {split: {metric: value}} — e.g. pressure vs clean
+    pocket, or all 16 depth/direction zones — instead of 177-558 flat columns."""
+    async with get_engine().connect() as conn:
+        await _player_or_404(conn, player_id)
+        row = (await conn.execute(
+            text("""
+                SELECT stats FROM pff_player_stats
+                WHERE player_id = :pid AND facet = :facet
+                  AND season = :season AND week = :week
+            """),
+            {"pid": player_id, "facet": facet, "season": season, "week": week},
+        )).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no {facet} row for {player_id} season={season} week={week}",
+        )
+    return {"player_id": player_id, "facet": facet, "season": season, "week": week,
+            **compare(row, metrics)}
 
 
 @router.get("/players/{player_id}/clutch")

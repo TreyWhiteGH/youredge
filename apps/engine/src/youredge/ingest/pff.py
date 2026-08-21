@@ -40,9 +40,14 @@ PROMOTED = {
     "snaps": ["snap_counts_total", "snaps", "snap_counts_pass_play", "total_snaps"],
     "slot_rate": ["slot_rate", "slot_snaps_pct", "pct_slot"],
     "wide_rate": ["wide_rate", "wide_snaps_pct", "pct_wide"],
+    "inline_rate": ["inline_rate"],
+    "routes": ["routes"],
+    "yprr": ["yprr", "yards_per_route_run"],
     "grade": ["grades_offense", "grades_defense", "grades_coverage_defense",
               "grades_pass_route", "grade"],
 }
+# Rates PFF reports as percentages; stored 0-1 like every other rate we keep.
+PCT_COLS = {"slot_rate", "wide_rate", "inline_rate"}
 NAME_COLS = ["player", "player_name", "name"]
 TEAM_COLS = ["team_name", "team", "franchise"]
 
@@ -107,31 +112,38 @@ async def ingest_file(conn, path: Path, alias_map: dict, team_by_player: dict,
             continue
         pids = [pid]
 
-        def num(col):
+        def num(target):
+            col = typed_cols.get(target)
             if col is None or pd.isna(row.get(col)):
                 return None
             v = float(row[col])
-            return v / 100.0 if col and "rate" in col.lower() and v > 1 else v
+            return v / 100.0 if target in PCT_COLS else v
 
+        snaps = num("snaps")
         await conn.execute(
             text("""
                 INSERT INTO pff_player_stats
                     (player_id, season, week, facet, team_id, snaps, slot_rate,
-                     wide_rate, grade, stats)
+                     wide_rate, inline_rate, routes, yprr, grade, stats)
                 VALUES (:pid, :season, :week, :facet, :team, :snaps, :slot, :wide,
-                        :grade, CAST(:stats AS jsonb))
+                        :inline, :routes, :yprr, :grade, CAST(:stats AS jsonb))
                 ON CONFLICT (player_id, season, facet, week) DO UPDATE
                   SET team_id = EXCLUDED.team_id, snaps = EXCLUDED.snaps,
                       slot_rate = EXCLUDED.slot_rate, wide_rate = EXCLUDED.wide_rate,
-                      grade = EXCLUDED.grade, stats = EXCLUDED.stats
+                      inline_rate = EXCLUDED.inline_rate, routes = EXCLUDED.routes,
+                      yprr = EXCLUDED.yprr, grade = EXCLUDED.grade,
+                      stats = EXCLUDED.stats
             """),
             {
                 "pid": pids[0], "season": season, "week": week, "facet": facet,
                 "team": _team_id(row.get(team_col)) if team_col else None,
-                "snaps": int(row[typed_cols["snaps"]]) if typed_cols["snaps"] and pd.notna(row.get(typed_cols["snaps"])) else None,
-                "slot": num(typed_cols["slot_rate"]),
-                "wide": num(typed_cols["wide_rate"]),
-                "grade": num(typed_cols["grade"]),
+                "snaps": int(snaps) if snaps is not None else None,
+                "slot": num("slot_rate"),
+                "wide": num("wide_rate"),
+                "inline": num("inline_rate"),
+                "routes": int(r) if (r := num("routes")) is not None else None,
+                "yprr": num("yprr"),
+                "grade": num("grade"),
                 "stats": json.dumps({k: (None if pd.isna(v) else v) for k, v in row.items()},
                                     default=str),
             },

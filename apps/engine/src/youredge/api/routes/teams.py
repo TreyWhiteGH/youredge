@@ -195,6 +195,61 @@ async def unit_grades(team_id: str, season: int = Query(default=2025)):
     return {"team_id": team_id, "season": season, "units": units}
 
 
+@router.get("/teams/{team_id}/protection")
+async def pass_protection(team_id: str, season: int = Query(default=2025)):
+    """Pass protection detail: unit pressure rate allowed plus per-lineman rows.
+
+    pressure_rate_allowed is derived (pressures / pass-block snaps), not PFF's
+    proprietary Pass Blocking Efficiency — the components are theirs, the ratio
+    is ours and is stated plainly so nobody mistakes it for a PFF metric.
+    true_pass_set_grade excludes screens/play-action/quick game, which is the
+    cleaner read on a lineman actually protecting.
+    """
+    async with get_engine().connect() as conn:
+        rows = (await conn.execute(
+            text("""
+                SELECT p.name, s.stats->>'position' AS position,
+                       (s.stats->>'snap_counts_pass_block')::real AS pb_snaps,
+                       (s.stats->>'pressures_allowed')::real AS pressures,
+                       (s.stats->>'sacks_allowed')::real AS sacks,
+                       (s.stats->>'hurries_allowed')::real AS hurries,
+                       (s.stats->>'hits_allowed')::real AS hits,
+                       s.grade,
+                       (s.stats->>'true_pass_set_grades_pass_block')::real AS true_pass_set_grade
+                FROM pff_player_stats s JOIN players p USING (player_id)
+                WHERE s.facet = 'pass_blocking' AND s.season = :season AND s.week = 0
+                  AND s.team_id = :tid
+                  AND (s.stats->>'snap_counts_pass_block')::real >= 100
+                ORDER BY pb_snaps DESC
+            """),
+            {"tid": team_id, "season": season},
+        )).mappings().all()
+    if not rows:
+        raise HTTPException(status_code=404,
+                            detail=f"no pass-blocking data for {team_id} season={season}")
+
+    linemen = []
+    tot_snaps = tot_press = 0.0
+    for r in rows:
+        d = {k: (float(v) if isinstance(v, (int, float)) else v) for k, v in dict(r).items()}
+        if r["pb_snaps"]:
+            d["pressure_rate_allowed"] = round((r["pressures"] or 0) / r["pb_snaps"], 4)
+            tot_snaps += r["pb_snaps"]
+            tot_press += r["pressures"] or 0
+        linemen.append(d)
+
+    return {
+        "team_id": team_id, "season": season,
+        "unit": {
+            "pass_block_snaps": int(tot_snaps),
+            "pressures_allowed": int(tot_press),
+            "pressure_rate_allowed": round(tot_press / tot_snaps, 4) if tot_snaps else None,
+            "linemen": len(linemen),
+        },
+        "by_lineman": linemen,
+    }
+
+
 @router.get("/teams/{team_id}/offense/receiver-alignment")
 async def receiver_alignment(team_id: str, seasons: list[int] = Query(default=DEFAULT_SEASONS)):
     """Team pass production split by target's NGS alignment label (SLOT_WR vs

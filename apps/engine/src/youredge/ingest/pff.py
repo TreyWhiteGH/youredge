@@ -42,19 +42,35 @@ PROMOTED = {
     # dropbacks for QBs, attempts for backs). First match wins, so unit
     # rollups can weight by it uniformly.
     "snaps": ["snap_counts_offense", "snap_counts_defense", "snap_counts_total",
-              "snap_counts_block", "snap_counts_coverage", "snap_counts_pass_rush",
+              "snap_counts_block", "snap_counts_pass_block", "snap_counts_run_block",
+              "snap_counts_coverage", "snap_counts_pass_rush", "snap_counts_run_defense",
               "snaps", "total_snaps", "passing_snaps", "routes", "attempts",
-              "dropbacks", "snap_counts_pass_play"],
+              "dropbacks", "snap_counts_pass_play", "snap_counts_run_play"],
     "slot_rate": ["slot_rate", "slot_snaps_pct", "pct_slot"],
     "wide_rate": ["wide_rate", "wide_snaps_pct", "pct_wide"],
     "inline_rate": ["inline_rate"],
     "routes": ["routes"],
     "yprr": ["yprr", "yards_per_route_run"],
-    "grade": ["grades_offense", "grades_defense", "grades_coverage_defense",
-              "grades_pass_route", "grade"],
+    "grade": ["grades_offense", "grades_defense", "grade"],
 }
 # Rates PFF reports as percentages; stored 0-1 like every other rate we keep.
 PCT_COLS = {"slot_rate", "wide_rate", "inline_rate"}
+
+# "grade" should mean *this facet's* grade. A global priority list can't do that:
+# facets share column names (the rushing export also carries grades_run_block for
+# blocking backs), so a shared list silently grades the wrong skill. Explicit
+# per-facet choice, falling back to PROMOTED["grade"].
+FACET_GRADE = {
+    "pass_blocking": "grades_pass_block",
+    "run_blocking": "grades_run_block",
+    "coverage": "grades_coverage_defense",
+    "coverage_scheme": "grades_coverage_defense",
+    "slot_coverage": "grades_coverage_defense",
+    "pass_rush": "grades_pass_rush_defense",
+    "prp": "grades_pass_rush_defense",
+    "run_defense": "grades_run_defense",
+    "defense": "grades_defense",
+}
 NAME_COLS = ["player", "player_name", "name"]
 TEAM_COLS = ["team_name", "team", "franchise"]
 
@@ -96,6 +112,8 @@ async def ingest_file(conn, path: Path, alias_map: dict, team_by_player: dict,
         log.warning("%s: no player-name column found in %s", path.name, list(df.columns)[:8])
         return 0, 0
     typed_cols = {k: _col(df, v) for k, v in PROMOTED.items()}
+    if (preferred := FACET_GRADE.get(facet)) and (col := _col(df, [preferred])):
+        typed_cols["grade"] = col
 
     id_col = _col(df, ["player_id", "pff_id"])
 

@@ -37,7 +37,14 @@ FNAME = re.compile(r"^(?P<facet>[a-z_]+)_(?P<season>\d{4})(?:_wk(?P<week>\d+))?\
 
 # Candidate PFF header names per typed column (first match wins, case-insensitive).
 PROMOTED = {
-    "snaps": ["snap_counts_total", "snaps", "snap_counts_pass_play", "total_snaps"],
+    # "snaps" is the facet's volume denominator, not always literal snaps:
+    # every facet reports participation differently (routes for receivers,
+    # dropbacks for QBs, attempts for backs). First match wins, so unit
+    # rollups can weight by it uniformly.
+    "snaps": ["snap_counts_offense", "snap_counts_defense", "snap_counts_total",
+              "snap_counts_block", "snap_counts_coverage", "snap_counts_pass_rush",
+              "snaps", "total_snaps", "passing_snaps", "routes", "attempts",
+              "dropbacks", "snap_counts_pass_play"],
     "slot_rate": ["slot_rate", "slot_snaps_pct", "pct_slot"],
     "wide_rate": ["wide_rate", "wide_snaps_pct", "pct_wide"],
     "inline_rate": ["inline_rate"],

@@ -15,6 +15,7 @@ from youredge.db import get_engine
 from youredge.tendencies.defense import team_defense
 from youredge.tendencies.offense import team_offense
 from youredge.tendencies.onoff import player_onoff
+from youredge.tendencies.pff_units import team_units
 
 router = APIRouter(tags=["teams"])
 
@@ -177,6 +178,21 @@ async def _absence(team_id: str, player_id: str, seasons: list[int],
         "onoff": onoff,
         "backup": backup_profile,
     }
+
+
+@router.get("/teams/{team_id}/units")
+async def unit_grades(team_id: str, season: int = Query(default=2025)):
+    """PFF unit quality (snap-weighted grades + league rank) for pass/run
+    blocking, pass rush, run defense, coverage, receiving, rushing. Pass
+    protection in particular has no free-data equivalent."""
+    async with get_engine().connect() as conn:
+        units = await team_units(conn, team_id, season)
+    if not units:
+        raise HTTPException(
+            status_code=404,
+            detail=f"no PFF unit data for {team_id} season={season}",
+        )
+    return {"team_id": team_id, "season": season, "units": units}
 
 
 @router.get("/teams/{team_id}/offense/receiver-alignment")

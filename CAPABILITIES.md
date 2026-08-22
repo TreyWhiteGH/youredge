@@ -1,6 +1,6 @@
 # YourEdge — Data & Capability Reference
 
-*Updated 2026-08-21. Written for humans and for the Phase-3 LLM layer: every table
+*Updated 2026-08-22. Written for humans and for the Phase-3 LLM layer: every table
 and endpoint below is a tool the Narrator/Planner can query, and the "AI context"
 notes say when to reach for each. The core contract holds everywhere: **the Engine
 computes every number; the LLM selects and explains.***
@@ -13,7 +13,7 @@ computes every number; the LLM selects and explains.***
 
 | Table | Rows | What it is |
 |---|---|---|
-| `teams` | 280 | Canonical teams, both leagues. `team_id` like `nfl:BAL`, `ncaaf:59`. |
+| `teams` | 280 | Canonical teams, both leagues. `team_id` like `nfl:BAL`, `ncaaf:59`. `classification` marks FBS (138) vs FCS (105) for NCAAF. |
 | `players` | 4,619 | NFL players active 2023+ plus current rosters. `player_id` = `nfl:<gsis_id>`. Carries `position`, `team_id`, and `ngs_position` (NGS tracking-derived alignment: `SLOT_WR`, `SLOT_CB`, `HIGH_SAFETY`). |
 | `entity_xwalk` | 25,780 | Translation between external ID systems and canonical IDs. Sources: `cfbd`, `odds_api`, `cfbd_alias`/`nflverse_alias` (normalized names), `espn`, `pfr`, `pff`. |
 
@@ -24,7 +24,7 @@ computes every number; the LLM selects and explains.***
 | Table | Rows | What it is |
 |---|---|---|
 | `games` | 4,777 | Both leagues, 2023–2025 complete (incl. playoffs/CFP) plus 2026 schedules. `season_type` separates postseason; `notes` names bowls/CFP rounds (filter `ILIKE 'CFP%' OR ILIKE 'College Football Playoff%'`). |
-| `plays` | 635,436 | The modeling foundation. NFL rows enriched: `epa`, `wpa`, `success`, `complete_pass`, `interception`, `touchdown`, `air_yards`, `yards_after_catch`, `qb_dropback`, `qb_scramble`, `pass_location`, `run_location`, `field_goal_result`, score state, clock. NCAAF rows carry `ppa` (CFBD's EPA analog — different scale, never mix leagues in one aggregate). |
+| `plays` | 635,436 | The modeling foundation. NFL rows (148k) enriched: `epa`, `wpa`, `success`, `complete_pass`, `interception`, `touchdown`, `air_yards`, `yards_after_catch`, `qb_dropback`, `qb_scramble`, `pass_location`, `run_location`, `field_goal_result`, score state, clock. NCAAF rows (488k) carry `ppa` in the `epa` column (CFBD's analog — different scale, **never mix leagues in one aggregate**) and `success` backfilled as `epa > 0`; `qb_dropback`/`touchdown` are nflverse-only and stay NULL. |
 
 **AI context:** every tendency, clutch metric, and script prior computes **from** this table — never quote a stat that doesn't trace here or to an official aggregate. Mode 3 hypothesis testing ("does NY's run defense fade in Q4?") is a query over `plays`, not an opinion.
 
@@ -50,8 +50,25 @@ computes every number; the LLM selects and explains.***
 
 **AI context:** game logs answer "how has X performed" with official numbers — quote these, not sums over play-by-play. Target share + air-yards share are the prop layer's usage inputs. PFF is the layer free data can't reach: true alignment percentages, offensive-line measurement, coverage-allowed stats, and pressure splits. Snap counts + depth chart power "who plays, who's next"; injuries gate recommendations, they are never speculated about.
 
-**PFF facets loaded:** `passing`, `passing_depth`, `passing_pressure`, `passing_concept`, `time_in_pocket`, `allowed_pressure`, `receiving`, `receiving_depth`, `receiving_concept`, `receiving_scheme`, `rushing`, `blocking`, `pass_blocking`, `run_blocking`, `defense`, `pass_rush`, `run_defense`, `coverage`, `coverage_scheme`, `slot_coverage`, `prp`, `field_goals`.
+**PFF facets loaded (NFL):** `passing`, `passing_depth`, `passing_pressure`, `passing_concept`, `time_in_pocket`, `allowed_pressure`, `receiving`, `receiving_depth`, `receiving_concept`, `receiving_scheme`, `rushing`, `blocking`, `pass_blocking`, `run_blocking`, `defense`, `pass_rush`, `run_defense`, `coverage`, `coverage_scheme`, `slot_coverage`, `prp`, `field_goals`.
 y
+### NCAAF context (coaching & roster experience)
+
+| Table | Rows | What it is |
+|---|---|---|
+| `coaches` | 374 | `cfbd_coach:<id>`, `history_seasons` = FBS seasons visible |
+| `coach_seasons` | 1,571 | PK `(coach_id, team_id, season)` — **a coach changing schools is a new row, not a new coach**, so the signal travels with him |
+| `coach_features` | 1,571 | The portable signal: `career_sp_residual` (SP+ minus what his talent predicted, over all prior seasons **anywhere**), `prior_school_trajectory`, `seasons_of_history`, `arrived_this_season` |
+| `team_season_context` | 1,434 | 2016–2026 returning production (`pct_ppa` + splits, `usage`), `talent`, recruiting, SP+, `portal_in/out` (**NULL pre-2021, not zero**) |
+| `transfers` | 23,358 | Portal detail 2021–2026, origin/destination/stars |
+
+**AI context:** this is where college reasoning starts, not player stats. Roster churn
+means last year's grades travel poorly, while returning production spans 2.8%–97.3% and
+a proven coach arriving at a new school is a signal the market prices slowly (Cignetti:
++27.1 career residual carried from James Madison to Indiana). Always relay
+`seasons_of_history` — short history means *uncertain*, not average. Full detail in
+[NCAAF.md](NCAAF.md).
+
 ### Tagging & memory (Phase 3 surfaces, schema live)
 
 | Table | Rows | What it is |
@@ -66,9 +83,12 @@ y
 
 ## 2. API endpoints (`localhost:8000`, interactive docs at `/docs`)
 
-All prefixed `/api/football`.
+**Paths split by league.** `/api/nfl/*` and `/api/ncaaf/*`; `/api/football/*` keeps only
+genuinely cross-league surfaces (`health`, SGP stubs, `pff-drop`). Canonical IDs carry
+their league, so `/api/nfl/teams/ncaaf:59` returns **400** rather than an empty result —
+"wrong league" and "no data" mean different things.
 
-### Players
+### Players — `/api/nfl/*` (NFL only: props, NGS, PFF alignment, clutch)
 
 | Endpoint | AI context — when to use it |
 |---|---|
@@ -81,7 +101,7 @@ All prefixed `/api/football`.
 | `GET /players/{id}/pff` | PFF rows by `facet`/`seasons`/`weekly`. Typed headliners + complete export row. |
 | `GET /players/{id}/pff/splits` | **Split facets as `{split: {metric: value}}`** — pressure vs clean, 16 depth×direction zones, man vs zone, play-action vs not. Narrow with `metrics=`. This is how the LLM reaches 558-column tables without knowing column names. |
 
-### Teams
+### Teams — `/api/nfl/*` and `/api/ncaaf/*`
 
 | Endpoint | AI context |
 |---|---|
@@ -91,6 +111,18 @@ All prefixed `/api/football`.
 | `GET /teams/{id}/offense/receiver-alignment` | Pass production by target alignment (targets, catch rate, EPA/target, aDOT, share). |
 | `GET /teams/{id}/{offense\|defense}/absence?player_id=` | On/off unit splits, depth slot, next-man-up chosen by PFF slot-rate proximity, plus starter-vs-backup grade dropoff. **Correlational** — relay sample sizes. |
 | `GET /tendencies/pass-rate?team_id=` | Team vs league pass rate per (quarter × score state), with deltas and sample sizes. Script priors. |
+
+### NCAAF-only — `/api/ncaaf/*`
+
+| Endpoint | AI context |
+|---|---|
+| `GET /coaches?q=` · `/coaches/{id}` | Coach search and **full career across every school** — the portable-signal view |
+| `GET /teams/{id}/coaching` | Current coach, tenure, `arrived_this_season`, career residual |
+| `GET /teams/{id}/context` | Returning production **with league percentile**, talent, recruiting, SP+, portal counts |
+| `GET /teams/{id}/transfers` | Portal detail in/out with stars |
+
+Team cards under `/api/ncaaf/` rank **within FBS (138)** — FCS crossover opponents
+would otherwise pad the field to 237 and flatter every rank.
 
 ### Stubs awaiting Phases 1–3 (501 with phase marker)
 
@@ -109,6 +141,7 @@ All prefixed `/api/football`.
 | `make ingest-players` | Player master + rosters + espn/pfr/pff/name-alias xwalk rows. |
 | `make ingest-snaps` | Snap counts + latest depth charts. |
 | `make ingest-pff` | Parse PFF drops from `data/pff/` (CSV or harvested JSON). |
+| `make ingest-cfbd-context` | NCAAF coaching, returning production, talent, SP+, recruiting, portal (2016–2026). Six CFBD calls per season, **one transaction per season** so a late failure can't discard finished ones. |
 | `make poll-odds` | One odds pass, 5 books, both leagues; resolves events, de-vigs inline. |
 | `make devig` | Backfill `fair_prob` on any snapshot group missing it. |
 | `python -m youredge.ingest.player_stats --seasons …` | Game logs + QB/receiving NGS. |
@@ -136,10 +169,19 @@ All prefixed `/api/football`.
 - **Scrambles count as runs** in pass-rate tendencies (nflverse convention); `qb_dropback` metrics don't have this issue.
 - **PFF weeks are PFF's** — postseason numbering is remapped on ingest; don't compare raw week integers across sources.
 - **Split facets have no top-level grade** by design; their data lives in prefixed columns via `/pff/splits`.
+- **NCAAF coach history is FBS-only** — FCS years (Cignetti at JMU 2019–21) are absent;
+  `seasons_of_history` carries that, so short history reads as uncertain, not average.
+- **`career_sp_residual` uses a simplified talent baseline**; sound for ranking, not a
+  calibrated projection.
+- **Portal is NULL before 2021**, which is not the same as zero.
+- **NCAAF has no player identity yet** — no props, no player game logs, no usage shares
+  (Phase 2). `rz_td_rate` is NULL for NCAAF because `touchdown` is nflverse-only.
 - **Injuries gate, never narrate.**
 
 ## 6. What's next
 
 Phase 1 remainder: more tendency surfaces (pace, plays-per-state, red zone, fatigue) → **drive-level Monte Carlo sim** → **calibration backtest** vs 2023–25 closing lines. Phase 2: correlation from the sim, SGP pricing vs book quotes, leg diagnostics. Phase 3: the four modes as LLM tool-use.
+
+**NCAAF Phase 2 (planned):** college player identity from CFBD rosters (ESPN athlete ids + jersey), player props (confirmed live — 5–6 books on a mid-tier game, anytime TD densest), and PFF college (`league=ncaa`, needs a `franchise_id`-keyed team crosswalk because PFF's college team names are truncated). **Phase 3:** learned weighting of coaching vs continuity, fit from data rather than asserted.
 
 **Available now but unbuilt:** template definitions as predicates over the unit/trait data, retro-labeling all 4,777 games into `taggings`, and per-template base rates + CLV records — which fills the two empty tables the architecture already anticipates and gives Mode 3 an honest, sim-free answer before Phase 1 lands.

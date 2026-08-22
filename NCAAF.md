@@ -22,6 +22,7 @@ James Madison:
 
 | Season | School | Record | SP+ | Tenure | Arrived | Career SP+ residual |
 |---|---|---|---|---|---|---|
+| 2019–21 | James Madison *(FCS)* | **33-5** | — | | | seeded |
 | 2022 | James Madison | 8-3 | 6.5 | 1 | ✓ | — |
 | 2023 | James Madison | 11-1 | 11.8 | 2 | | — |
 | 2024 | **Indiana** | 11-2 | 20.1 | 1 | ✓ | **+27.1** |
@@ -41,8 +42,8 @@ visible beforehand in data we now store.
 | `games` (ncaaf) | 3,650 | 2023–2026 | incl. bowls/CFP; `notes` names the round |
 | `plays` (ncaaf) | 487,508 | 2023–2025 | `epa` holds CFBD's PPA; `success` backfilled as `epa > 0` |
 | `coaches` | 374 | 2016–2026 | `history_seasons` = FBS seasons visible |
-| `coach_seasons` | 1,571 | 2016–2026 | PK `(coach_id, team_id, season)` — **a coach changing schools is a new row, not a new coach** |
-| `coach_features` | 1,571 | 2016–2026 | the portable signal, computed from all prior seasons anywhere |
+| `coach_seasons` | 1,583 | 2016–2026 | PK `(coach_id, team_id, season)` — **a coach changing schools is a new row, not a new coach** |
+| `coach_features` | 1,581 | 2016–2026 | the portable signal, computed from all prior seasons anywhere |
 | `team_season_context` | 1,434 | 2016–2026 | returning production, talent, recruiting, SP+, portal |
 | `transfers` | 23,358 | **2021–2026** | portal detail; CFBD has nothing before 2021 |
 | `odds_snapshots` (ncaaf) | ~15k | 2023–2025 + 2026 | historical closing lines + live 2026 openers |
@@ -58,6 +59,7 @@ Computed per `(coach_id, season, team_id)` from **all prior seasons at any schoo
 | `prior_school_trajectory` | Slope of SP+ across prior seasons — improving or fading |
 | `seasons_of_history` | How much evidence exists. **Low means uncertain, not average.** |
 | `arrived_this_season` | First year at this school — the Cignetti trigger |
+| `fcs_seasons` / `fcs_wins` / `fcs_losses` / `fcs_win_pct` | Sub-FBS record, kept **separate** from the SP+ residual because FCS has no SP+ and the scales aren't comparable |
 
 ### `team_season_context` — roster experience and talent
 
@@ -134,9 +136,16 @@ per-season transaction boundary means you simply re-run the failed seasons.
 
 ## Caveats the AI layer must inherit
 
-- **Coach history is FBS-only.** Cignetti's FCS years at James Madison (2019–21) and Elon
-  are absent from CFBD. `seasons_of_history` carries this so short-history coaches read
-  as *uncertain*, not average.
+- **FCS coaching stints are hand-seeded, not API-sourced.** No free source carries them:
+  CFBD's `/coaches` is FBS-only (its `classification` param is silently ignored), ESPN's
+  coach endpoint is **not season-aware** and returns today's coach for every historical
+  year, and Wikidata is sparse and undated. Seeded rows carry `source='manual_fcs'` and
+  `verified=false` — the mapping is asserted, the **records are computed** from CFBD FCS
+  game data. Extend via `data/seeds/fcs_coach_stints.csv` then `make ingest-fcs-coaches`.
+- **FCS success is its own feature, not blended into `career_sp_residual`.** An FCS SRS
+  of -13.5 does not mean what an FBS SP+ of -13.5 means. Phase 3 learns the weight.
+- **`seasons_of_history` counts FBS seasons only** — short history means *uncertain*, not
+  average.
 - **`career_sp_residual` uses a simplified talent baseline** (SP+ regressed on talent
   z-score per season). Directionally sound for ranking; not a calibrated projection.
 - **Portal NULL ≠ zero** before 2021.

@@ -57,8 +57,8 @@ y
 | Table | Rows | What it is |
 |---|---|---|
 | `coaches` | 374 | `cfbd_coach:<id>`, `history_seasons` = FBS seasons visible |
-| `coach_seasons` | 1,571 | PK `(coach_id, team_id, season)` — **a coach changing schools is a new row, not a new coach**, so the signal travels with him |
-| `coach_features` | 1,571 | The portable signal: `career_sp_residual` (SP+ minus what his talent predicted, over all prior seasons **anywhere**), `prior_school_trajectory`, `seasons_of_history`, `arrived_this_season` |
+| `coach_seasons` | 1,583 | PK `(coach_id, team_id, season)` — **a coach changing schools is a new row, not a new coach**, so the signal travels with him. `source` marks CFBD facts vs hand-seeded FCS stints |
+| `coach_features` | 1,571 | The portable signal: `career_sp_residual` (SP+ minus what his talent predicted, over all prior seasons **anywhere**), `prior_school_trajectory`, `seasons_of_history`, `arrived_this_season`, plus `fcs_*` sub-FBS record as a **separate** feature |
 | `team_season_context` | 1,434 | 2016–2026 returning production (`pct_ppa` + splits, `usage`), `talent`, recruiting, SP+, `portal_in/out` (**NULL pre-2021, not zero**) |
 | `transfers` | 23,358 | Portal detail 2021–2026, origin/destination/stars |
 
@@ -141,6 +141,7 @@ would otherwise pad the field to 237 and flatter every rank.
 | `make ingest-players` | Player master + rosters + espn/pfr/pff/name-alias xwalk rows. |
 | `make ingest-snaps` | Snap counts + latest depth charts. |
 | `make ingest-pff` | Parse PFF drops from `data/pff/` (CSV or harvested JSON). |
+| `make ingest-fcs-coaches` | Seeded sub-FBS coaching stints from `data/seeds/`; records computed from CFBD FCS games. |
 | `make ingest-cfbd-context` | NCAAF coaching, returning production, talent, SP+, recruiting, portal (2016–2026). Six CFBD calls per season, **one transaction per season** so a late failure can't discard finished ones. |
 | `make poll-odds` | One odds pass, 5 books, both leagues; resolves events, de-vigs inline. |
 | `make devig` | Backfill `fair_prob` on any snapshot group missing it. |
@@ -169,8 +170,12 @@ would otherwise pad the field to 237 and flatter every rank.
 - **Scrambles count as runs** in pass-rate tendencies (nflverse convention); `qb_dropback` metrics don't have this issue.
 - **PFF weeks are PFF's** — postseason numbering is remapped on ingest; don't compare raw week integers across sources.
 - **Split facets have no top-level grade** by design; their data lives in prefixed columns via `/pff/splits`.
-- **NCAAF coach history is FBS-only** — FCS years (Cignetti at JMU 2019–21) are absent;
-  `seasons_of_history` carries that, so short history reads as uncertain, not average.
+- **FCS coaching stints are hand-seeded** (`source='manual_fcs'`, `verified=false`) —
+  no free API carries them, and ESPN's coach endpoint would have fabricated them by
+  returning today's coach for historical years. Records are computed from CFBD FCS games;
+  only the coach→school→years mapping is asserted.
+- **FCS success stays a separate feature** — FCS has no SP+, so it is never blended into
+  `career_sp_residual`. `seasons_of_history` counts FBS seasons only.
 - **`career_sp_residual` uses a simplified talent baseline**; sound for ranking, not a
   calibrated projection.
 - **Portal is NULL before 2021**, which is not the same as zero.

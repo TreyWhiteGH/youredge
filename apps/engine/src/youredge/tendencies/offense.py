@@ -12,10 +12,17 @@ _CARD = text("""
     WITH o AS (
         SELECT p.posteam_id,
                p.play_type, p.epa, p.success, p.yards_gained, p.touchdown,
-               p.interception, p.complete_pass, p.qb_dropback,
+               p.interception, p.complete_pass,
+               -- NCAAF has no qb_dropback (nflverse-only); play_type='pass'
+               -- already includes sacks/INTs via cfbd_map
+               COALESCE(p.qb_dropback, p.play_type = 'pass') AS qb_dropback,
                p.yardline_100, p.quarter, p.score_differential
         FROM plays p JOIN games g ON g.game_id = p.game_id
+        JOIN teams tm ON tm.team_id = p.posteam_id
         WHERE g.league = :league AND g.season = ANY(:seasons)
+          -- rank within division: FCS crossover opponents would otherwise
+          -- pad the field to 237 and make FBS ranks look better than they are
+          AND (tm.classification = 'fbs' OR g.league = 'nfl')
           AND p.play_type IN ('pass', 'run') AND p.down IS NOT NULL
     ),
     per_team AS (

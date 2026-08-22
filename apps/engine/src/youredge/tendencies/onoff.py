@@ -30,8 +30,8 @@ _ONOFF_TMPL = """
     )
     SELECT l.is_on,
         count(DISTINCT l.game_id)                              AS games,
-        avg(p.epa) FILTER (WHERE p.qb_dropback)                AS pass_epa,
-        avg(p.success::int) FILTER (WHERE p.qb_dropback)       AS pass_success,
+        avg(p.epa) FILTER (WHERE COALESCE(p.qb_dropback, p.play_type = 'pass'))                AS pass_epa,
+        avg(p.success::int) FILTER (WHERE COALESCE(p.qb_dropback, p.play_type = 'pass'))       AS pass_success,
         avg(p.epa) FILTER (WHERE p.play_type = 'run')          AS rush_epa,
         avg(p.success::int) FILTER (WHERE p.play_type = 'run') AS rush_success,
         avg((p.yards_gained >= 15)::int)

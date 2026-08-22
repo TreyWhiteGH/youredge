@@ -22,7 +22,7 @@ _ONOFF_TMPL = """
         FROM games g
         JOIN (SELECT DISTINCT team_id FROM played) tg
           ON g.home_team_id = tg.team_id OR g.away_team_id = tg.team_id
-        WHERE g.league = 'nfl' AND g.season = ANY(:seasons) AND g.status = 'final'
+        WHERE g.league = :league AND g.season = ANY(:seasons) AND g.status = 'final'
     ),
     labeled AS (
         SELECT t.game_id, t.team_id, (p.game_id IS NOT NULL) AS is_on
@@ -61,6 +61,7 @@ async def player_onoff(
     rows = {r["is_on"]: r for r in
             (await conn.execute(_QUERIES[side], {
                 "pid": player_id, "seasons": seasons, "thresh": ON_SNAP_PCT,
+                "league": player_id.split(":", 1)[0],
             })).mappings().all()}
     on, off = rows.get(True), rows.get(False)
     suffix = "allowed" if side == "defense" else "generated"

@@ -15,7 +15,7 @@ _CARD = text("""
                p.interception, p.complete_pass, p.qb_dropback,
                p.yardline_100, p.quarter, p.score_differential
         FROM plays p JOIN games g ON g.game_id = p.game_id
-        WHERE g.league = 'nfl' AND g.season = ANY(:seasons)
+        WHERE g.league = :league AND g.season = ANY(:seasons)
           AND p.play_type IN ('pass', 'run') AND p.down IS NOT NULL
     ),
     per_team AS (
@@ -50,7 +50,9 @@ def _r(v, nd=4):
 
 
 async def team_offense(conn: AsyncConnection, team_id: str, seasons: list[int]) -> dict[str, Any]:
-    rows = (await conn.execute(_CARD, {"seasons": seasons})).mappings().all()
+    league = team_id.split(":", 1)[0]
+    rows = (await conn.execute(
+        _CARD, {"seasons": seasons, "league": league})).mappings().all()
     mine = next((r for r in rows if r["posteam_id"] == team_id), None)
     if mine is None:
         return {}

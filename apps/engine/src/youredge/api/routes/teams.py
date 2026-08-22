@@ -269,13 +269,14 @@ async def receiver_alignment(team_id: str, seasons: list[int] = Query(default=DE
                 FROM plays pl
                 JOIN games g ON g.game_id = pl.game_id
                 LEFT JOIN players p ON p.player_id = 'nfl:' || pl.receiver_player_id
-                WHERE g.league = 'nfl' AND g.season = ANY(:seasons)
+                WHERE g.league = :league AND g.season = ANY(:seasons)
                   AND pl.posteam_id = :tid AND pl.play_type = 'pass'
                   AND pl.receiver_player_id IS NOT NULL
                 GROUP BY 1 HAVING count(*) >= 10
                 ORDER BY targets DESC
             """),
-            {"tid": team_id, "seasons": seasons},
+            {"tid": team_id, "seasons": seasons,
+             "league": team_id.split(":", 1)[0]},
         )).mappings().all()
     if not rows:
         raise HTTPException(status_code=404, detail=f"no targets found for {team_id}")

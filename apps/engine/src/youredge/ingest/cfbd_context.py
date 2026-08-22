@@ -225,12 +225,27 @@ async def compute_coach_features(conn) -> int:
                    cs.sp_overall - e.expected_sp AS sp_residual
             FROM coach_seasons cs
             LEFT JOIN expected e ON e.team_id = cs.team_id AND e.season = cs.season
-            WHERE cs.sp_overall IS NOT NULL
+            WHERE cs.sp_overall IS NOT NULL AND cs.classification = 'fbs'
         ),
         target AS (SELECT DISTINCT coach_id, season, team_id FROM coach_seasons)
+        , fcs AS (
+            -- Sub-FBS record from prior seasons, kept separate from the SP+ residual
+            SELECT coach_id, season, team_id,
+                   (SELECT count(*) FROM coach_seasons f
+                    WHERE f.coach_id = t2.coach_id AND f.season < t2.season
+                      AND f.classification = 'fcs') AS n,
+                   (SELECT sum(f.wins) FROM coach_seasons f
+                    WHERE f.coach_id = t2.coach_id AND f.season < t2.season
+                      AND f.classification = 'fcs') AS w,
+                   (SELECT sum(f.losses) FROM coach_seasons f
+                    WHERE f.coach_id = t2.coach_id AND f.season < t2.season
+                      AND f.classification = 'fcs') AS l
+            FROM (SELECT DISTINCT coach_id, season, team_id FROM coach_seasons) t2
+        )
         INSERT INTO coach_features (coach_id, season, team_id, career_sp_residual,
                                     career_sp_mean, prior_school_trajectory,
-                                    seasons_of_history, arrived_this_season)
+                                    seasons_of_history, arrived_this_season,
+                                    fcs_seasons, fcs_wins, fcs_losses, fcs_win_pct)
         SELECT t.coach_id, t.season, t.team_id,
                avg(p.sp_residual),
                avg(p.sp_overall),
@@ -239,9 +254,14 @@ async def compute_coach_features(conn) -> int:
                count(p.season),
                NOT EXISTS (SELECT 1 FROM coach_seasons pr
                            WHERE pr.coach_id = t.coach_id AND pr.team_id = t.team_id
-                             AND pr.season < t.season)
+                             AND pr.season < t.season),
+               COALESCE(max(fcs.n), 0), max(fcs.w), max(fcs.l),
+               CASE WHEN COALESCE(max(fcs.w), 0) + COALESCE(max(fcs.l), 0) > 0
+                    THEN max(fcs.w)::real / (max(fcs.w) + max(fcs.l)) END
         FROM target t
         LEFT JOIN resid p ON p.coach_id = t.coach_id AND p.season < t.season
+        LEFT JOIN fcs ON fcs.coach_id = t.coach_id AND fcs.season = t.season
+                     AND fcs.team_id = t.team_id
         GROUP BY t.coach_id, t.season, t.team_id
     """))
 

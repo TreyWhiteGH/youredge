@@ -54,3 +54,26 @@ CREATE TABLE game_features (
     total_residual  REAL      -- total_points - closing_total
 );
 CREATE INDEX idx_gf_season ON game_features (league, season);
+
+-- Learned weights live as data, not constants in code: retraining is a data change,
+-- and the Narrator can quote what the model currently believes (and how well it did).
+CREATE TABLE model_runs (
+    run_id         BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    league         TEXT NOT NULL,
+    target         TEXT NOT NULL,
+    model_type     TEXT NOT NULL,
+    train_seasons  INT[] NOT NULL,
+    holdout_season INT,
+    n_train        INT, n_holdout INT,
+    metrics        JSONB NOT NULL,
+    trained_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE model_weights (
+    run_id     BIGINT NOT NULL REFERENCES model_runs(run_id) ON DELETE CASCADE,
+    feature    TEXT NOT NULL,
+    weight     REAL NOT NULL,
+    std_error  REAL,
+    importance REAL,
+    PRIMARY KEY (run_id, feature)
+);

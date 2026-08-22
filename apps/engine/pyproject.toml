@@ -17,6 +17,7 @@ dependencies = [
     "pyarrow>=17.0",
     "nflreadpy>=0.1",
     "tenacity>=9.0",
+    "scikit-learn>=1.5",
 ]
 
 [project.optional-dependencies]

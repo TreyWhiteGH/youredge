@@ -53,3 +53,6 @@ reset-db:
 
 ingest-pff:
 	docker compose run --rm ingest python -m youredge.ingest.pff
+
+ingest-cfbd-context:
+	docker compose run --rm ingest python -m youredge.ingest.cfbd_context --seasons 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025 2026

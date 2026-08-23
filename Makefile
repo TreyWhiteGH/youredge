@@ -65,3 +65,9 @@ ingest-cfbd-history:
 
 ingest-cfbd-roster:
 	docker compose run --rm ingest python -m youredge.ingest.cfbd_roster --seasons 2023 2024 2025 2026
+
+ingest-cfbd-player-stats:
+	docker compose run --rm ingest python -m youredge.ingest.cfbd_player_stats --seasons 2023 2024 2025
+
+ingest-venues:
+	docker compose run --rm ingest python -m youredge.ingest.venues --seasons 2023 2024 2025 2026

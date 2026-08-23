@@ -1,6 +1,6 @@
 # YourEdge — NCAAF Data Reference
 
-*Updated 2026-08-22. Companion to [CAPABILITIES.md](CAPABILITIES.md), which covers the
+*Updated 2026-08-23. Companion to [CAPABILITIES.md](CAPABILITIES.md), which covers the
 whole system. This file is the college-specific view: what's loaded, why it's shaped
 this way, and what it can and cannot answer.*
 
@@ -39,14 +39,17 @@ visible beforehand in data we now store.
 | Table | Rows | Coverage | Notes |
 |---|---|---|---|
 | `teams` (ncaaf) | **138 FBS** | current | `classification` also marks 105 FCS + 1 D-III; context layer is FBS-only |
-| `games` (ncaaf) | 3,650 | 2023–2026 | incl. bowls/CFP; `notes` names the round |
+| `games` (ncaaf) | 9,400+ | **2016–2026** | incl. bowls/CFP; `notes` names the round; `venue_id`/`neutral_site` attached |
 | `plays` (ncaaf) | 487,508 | 2023–2025 | `epa` holds CFBD's PPA; `success` backfilled as `epa > 0` |
 | `coaches` | 374 | 2016–2026 | `history_seasons` = FBS seasons visible |
 | `coach_seasons` | 1,583 | 2016–2026 | PK `(coach_id, team_id, season)` — **a coach changing schools is a new row, not a new coach** |
 | `coach_features` | 1,581 | 2016–2026 | the portable signal, computed from all prior seasons anywhere |
 | `team_season_context` | 1,434 | 2016–2026 | returning production, talent, recruiting, SP+, portal |
 | `transfers` | 23,358 | **2021–2026** | portal detail; CFBD has nothing before 2021 |
-| `odds_snapshots` (ncaaf) | ~15k | 2023–2025 + 2026 | historical closing lines + live 2026 openers |
+| `odds_snapshots` (ncaaf) | ~120k | **2016–2026** | historical closing lines + live 2026 openers |
+| `players` (ncaaf) | 40,602 | 2023–2026 | `ncaaf:<espn_athlete_id>`, with jersey + class year |
+| `player_game_stats` (ncaaf) | 107k+ | 2023–2025 | from `/games/players`; no targets/air-yards/EPA (CFBD doesn't report them) |
+| `venues` (ncaaf) | 852 | current | incl. **elevation** — Laramie 2,200m |
 
 ### `coach_features` — the portable signal
 
@@ -124,15 +127,39 @@ per-season transaction boundary means you simply re-run the failed seasons.
 
 ## What it cannot answer yet
 
-- **No college player identity.** `players` is NFL-only, so no props, no player game
-  logs, no usage shares. This is Phase 2.
+- **No prop odds yet.** Identity and game logs now exist, so props are unblocked — but the
+  market side costs Odds API credits and hasn't been pulled.
 - **`rz_td_rate` is NULL for NCAAF** — the `touchdown` flag is an nflverse-only column
   and CFBD's equivalent is lost in our play-type mapping. Needs a plays re-ingest.
 - **No PFF college data** — same API (`league=ncaa`), all 22 facets confirmed present,
   but it needs a logged-in session and a `franchise_id`-keyed team crosswalk because
   PFF's college team names are truncated (`S JOSE ST`, `N TEXAS`). Phase 2.
 - **No learned weighting yet.** Whether coaching or continuity dominates is contextual;
-  Phase 3 fits that from data rather than asserting it.
+  that gets fit from data rather than asserted. **No models exist yet — this is all data
+  and pipeline.**
+- **No weather.** CFBD's weather endpoint is paywalled ($10/mo tier). Venue elevation,
+  dome and surface are loaded; live conditions are not.
+- **No injury data, and none is obtainable.** College has no mandatory injury report and
+  CFBD publishes no snap counts, so unlike the NFL there isn't even an after-the-fact
+  availability proxy.
+
+## Modeling readiness
+
+**8,883 usable games** — closing spread, final score, and full context + coach features
+on both sides, 2016–2025. For comparison the NFL side has 237 once prior-season features
+are required, because its features are deep but its history is short. NCAAF is the
+inverse: the context reaches back to 2016 and now the labels do too.
+
+| Requirement | Status |
+|---|---|
+| Labels (score + closing line) | 8,578 FBS games, 2016–2025 |
+| Team context features | 11 seasons, both teams |
+| Coach features (portable, incl. FCS) | 11 seasons |
+| Player identity + production | 2023–2025 |
+| Venue / elevation / neutral site | loaded |
+| Prop market history | **not loaded** (costs credits) |
+| Weather | **paywalled** |
+| Injuries | **unobtainable** |
 
 ## Caveats the AI layer must inherit
 

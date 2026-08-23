@@ -1,6 +1,6 @@
 # YourEdge — Data & Capability Reference
 
-*Updated 2026-08-22. Written for humans and for the Phase-3 LLM layer: every table
+*Updated 2026-08-23. Written for humans and for the Phase-3 LLM layer: every table
 and endpoint below is a tool the Narrator/Planner can query, and the "AI context"
 notes say when to reach for each. The core contract holds everywhere: **the Engine
 computes every number; the LLM selects and explains.***
@@ -14,7 +14,7 @@ computes every number; the LLM selects and explains.***
 | Table | Rows | What it is |
 |---|---|---|
 | `teams` | 280 | Canonical teams, both leagues. `team_id` like `nfl:BAL`, `ncaaf:59`. `classification` marks FBS (138) vs FCS (105) for NCAAF. |
-| `players` | 4,619 | NFL players active 2023+ plus current rosters. `player_id` = `nfl:<gsis_id>`. Carries `position`, `team_id`, and `ngs_position` (NGS tracking-derived alignment: `SLOT_WR`, `SLOT_CB`, `HIGH_SAFETY`). |
+| `players` | 45,221 | NFL (4,619) `nfl:<gsis_id>` + NCAAF (40,602) `ncaaf:<espn_athlete_id>`, the id space CFBD's roster and stats endpoints share. `jersey`/`class_year` carried for college as match validators. Carries `position`, `team_id`, and `ngs_position` (NGS tracking-derived alignment: `SLOT_WR`, `SLOT_CB`, `HIGH_SAFETY`). |
 | `entity_xwalk` | 25,780 | Translation between external ID systems and canonical IDs. Sources: `cfbd`, `odds_api`, `cfbd_alias`/`nflverse_alias` (normalized names), `espn`, `pfr`, `pff`. |
 
 **AI context:** never invent an identifier. "Lamar" → `/players?q=` → canonical id → every other surface keys off it. Player IDs resolve *exactly* via `pff`/`espn` crosswalk rows, which is what keeps QB Josh Allen distinct from the Jaguars linebacker. If the crosswalk can't resolve something, the answer is "we can't link this," never a guess.
@@ -41,7 +41,7 @@ computes every number; the LLM selects and explains.***
 
 | Table | Rows | What it is |
 |---|---|---|
-| `player_game_stats` | 56,982 | Weekly game logs 2023–2025. Typed: attempts/completions/yards/TDs/INTs/sacks, `passing_epa`, `passing_cpoe`, carries, targets, `target_share`, `air_yards_share`, `wopr`. Full source row in `stats` JSONB (incl. all `def_*` box stats). Every row linked to canonical `game_id`, and carries `opponent_team_id`. |
+| `player_game_stats` | 164k+ | Weekly game logs 2023–2025, both leagues. NCAAF rows come from CFBD `/games/players` flattened out of its four-level nesting; college has **no** `targets`, `air_yards`, or EPA (CFBD doesn't report them — NULL, not derived). Typed: attempts/completions/yards/TDs/INTs/sacks, `passing_epa`, `passing_cpoe`, carries, targets, `target_share`, `air_yards_share`, `wopr`. Full source row in `stats` JSONB (incl. all `def_*` box stats). Every row linked to canonical `game_id`, and carries `opponent_team_id`. |
 | `qb_ngs_weekly` | 1,839 | Next Gen Stats passing: time-to-throw, intended air yards, aggressiveness, CPOE. Week 0 = season aggregate. |
 | `ngs_receiving_weekly` | 4,310 | NGS receiving: cushion, separation, aDOT, air-yards share, YAC over expected. |
 | `snap_counts` | 79,649 | Per player per game: offense/defense/ST snaps and %, plus `team_id`. The availability record behind on/off analysis. |
@@ -68,6 +68,18 @@ a proven coach arriving at a new school is a signal the market prices slowly (Ci
 +27.1 career residual carried from James Madison to Indiana). Always relay
 `seasons_of_history` — short history means *uncertain*, not average. Full detail in
 [NCAAF.md](NCAAF.md).
+
+### Venues & conditions
+
+| Table | Rows | What it is |
+|---|---|---|
+| `venues` | 893 | 852 NCAAF (with **elevation** — Laramie 2,200m) + 41 NFL. Statics only: location, capacity, dome, grass |
+| `games.*` | — | Per-game `venue_id`, `roof`, `surface`, `temp`, `wind`, `neutral_site` |
+
+**AI context:** roof and surface are game-level, not venue-level — retractable roofs open
+and close, and neutral-site games (216 NCAAF, 29 NFL) aren't played on the home surface.
+**Weather is NFL-only**: nflverse reports temp/wind (530 outdoor games), CFBD's weather
+endpoint is paywalled. A NULL `temp` means *not available* — never "indoors" or "calm".
 
 ### Tagging & memory (Phase 3 surfaces, schema live)
 

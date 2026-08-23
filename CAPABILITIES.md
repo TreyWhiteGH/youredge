@@ -41,7 +41,7 @@ computes every number; the LLM selects and explains.***
 
 | Table | Rows | What it is |
 |---|---|---|
-| `player_game_stats` | 164k+ | Weekly game logs 2023–2025, both leagues. NCAAF rows come from CFBD `/games/players` flattened out of its four-level nesting; college has **no** `targets`, `air_yards`, or EPA (CFBD doesn't report them — NULL, not derived). Typed: attempts/completions/yards/TDs/INTs/sacks, `passing_epa`, `passing_cpoe`, carries, targets, `target_share`, `air_yards_share`, `wopr`. Full source row in `stats` JSONB (incl. all `def_*` box stats). Every row linked to canonical `game_id`, and carries `opponent_team_id`. |
+| `player_game_stats` | 234,430 | Weekly game logs 2023–2025, both leagues (NFL 56,982 + NCAAF 177,448). NCAAF rows come from CFBD `/games/players` flattened out of its four-level nesting; college has **no** `targets`, `air_yards`, or EPA (CFBD doesn't report them — NULL, not derived). Typed: attempts/completions/yards/TDs/INTs/sacks, `passing_epa`, `passing_cpoe`, carries, targets, `target_share`, `air_yards_share`, `wopr`. Full source row in `stats` JSONB (incl. all `def_*` box stats). Every row linked to canonical `game_id`, and carries `opponent_team_id`. |
 | `qb_ngs_weekly` | 1,839 | Next Gen Stats passing: time-to-throw, intended air yards, aggressiveness, CPOE. Week 0 = season aggregate. |
 | `ngs_receiving_weekly` | 4,310 | NGS receiving: cushion, separation, aDOT, air-yards share, YAC over expected. |
 | `snap_counts` | 79,649 | Per player per game: offense/defense/ST snaps and %, plus `team_id`. The availability record behind on/off analysis. |

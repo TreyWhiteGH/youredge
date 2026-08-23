@@ -48,7 +48,7 @@ visible beforehand in data we now store.
 | `transfers` | 23,358 | **2021–2026** | portal detail; CFBD has nothing before 2021 |
 | `odds_snapshots` (ncaaf) | ~120k | **2016–2026** | historical closing lines + live 2026 openers |
 | `players` (ncaaf) | 40,602 | 2023–2026 | `ncaaf:<espn_athlete_id>`, with jersey + class year |
-| `player_game_stats` (ncaaf) | 107k+ | 2023–2025 | from `/games/players`; no targets/air-yards/EPA (CFBD doesn't report them) |
+| `player_game_stats` (ncaaf) | 177,448 | 2023–2025 | from `/games/players`; no targets/air-yards/EPA (CFBD doesn't report them) |
 | `venues` (ncaaf) | 852 | current | incl. **elevation** — Laramie 2,200m |
 
 ### `coach_features` — the portable signal

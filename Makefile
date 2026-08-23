@@ -62,3 +62,6 @@ ingest-fcs-coaches:
 
 ingest-cfbd-history:
 	docker compose run --rm ingest python -m youredge.ingest.cfbd_history --seasons 2016 2017 2018 2019 2020 2021 2022
+
+ingest-cfbd-roster:
+	docker compose run --rm ingest python -m youredge.ingest.cfbd_roster --seasons 2023 2024 2025 2026

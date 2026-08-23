@@ -126,3 +126,41 @@ async def resolve_event(
 
     await conn.execute(_XWALK_PUT, {"etype": "game", "cid": game[0], "sid": event_id})
     return game[0]
+
+
+async def resolve_ncaaf_player(
+    conn: AsyncConnection, name: str, team_id: str | None = None
+) -> str | None:
+    """Canonical NCAAF player_id from a free-text name, or None.
+
+    Odds feeds name players as strings ("J'Koby Williams") but always attach them
+    to an event, so the team is known. Team-scoped aliases are tried first because
+    college rosters share surnames constantly; the global alias is a fallback for
+    names unique across all of FBS. A name ambiguous even within one roster
+    resolves to neither — it is returned as None rather than guessed.
+    """
+    norm = normalize_name(name)
+    if not norm:
+        return None
+
+    if team_id:
+        row = (await conn.execute(
+            text("""
+                SELECT canonical_id FROM entity_xwalk
+                WHERE entity_type = 'player' AND source = 'ncaaf_alias_team'
+                  AND source_id = :sid
+            """),
+            {"sid": f"{team_id}|{norm}"},
+        )).first()
+        if row:
+            return row[0]
+
+    row = (await conn.execute(
+        text("""
+            SELECT canonical_id FROM entity_xwalk
+            WHERE entity_type = 'player' AND source = 'ncaaf_alias'
+              AND source_id = :sid
+        """),
+        {"sid": norm},
+    )).first()
+    return row[0] if row else None

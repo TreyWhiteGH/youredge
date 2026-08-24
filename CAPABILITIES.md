@@ -1,6 +1,6 @@
 # YourEdge — Data & Capability Reference
 
-*Updated 2026-08-23 (rev 2). Written for humans and for the Phase-3 LLM layer: every table
+*Updated 2026-08-23 (rev 3). Written for humans and for the Phase-3 LLM layer: every table
 and endpoint below is a tool the Narrator/Planner can query, and the "AI context"
 notes say when to reach for each. The core contract holds everywhere: **the Engine
 computes every number; the LLM selects and explains.***
@@ -50,14 +50,15 @@ computes every number; the LLM selects and explains.***
 
 **AI context:** game logs answer "how has X performed" with official numbers — quote these, not sums over play-by-play. Target share + air-yards share are the prop layer's usage inputs. PFF is the layer free data can't reach: true alignment percentages, offensive-line measurement, coverage-allowed stats, and pressure splits. Snap counts + depth chart power "who plays, who's next"; injuries gate recommendations, they are never speculated about.
 
-**PFF college is refused, not merely absent.** The API works (`league=ncaa`, all 22
-facets), but PFF's college player ids are a separate id space with no crosswalk, and the
-name fallback doesn't fail — it succeeds *wrongly*: a controlled test wrote 22 of 50
-college receivers into same-named NFL players' rows. The ingest now carries league by
-directory (`data/pff/` = NFL, `data/pff/ncaa/` = college) and **refuses college files
-until a `pff_ncaa` player crosswalk exists**. Enabling it needs a `franchise_id`-keyed
-team crosswalk (PFF truncates college names to `S JOSE ST`) plus jersey-validated
-player matching.
+**PFF college is refused, not merely absent** — and the reason is subtler than it first
+looked. PFF uses **one `player_id` per human across college and the pros**, so a 2024
+college receiver who has since been drafted resolves to the *correct* person through our
+NFL crosswalk — and then his college game lands as NFL production. On a 50-row test, 17
+resolved that way. That is level conflation, not mistaken identity. `level` is now part
+of the `pff_player_stats` key so both can coexist, but college rows belong under the
+`ncaaf:` canonical id, which still needs a `franchise_id`-keyed team crosswalk (PFF
+truncates college names to `S JOSE ST`) plus jersey-validated player matching. Until
+then, `data/pff/ncaa/` files are skipped with an explicit error.
 
 **PFF facets loaded (NFL):** `passing`, `passing_depth`, `passing_pressure`, `passing_concept`, `time_in_pocket`, `allowed_pressure`, `receiving`, `receiving_depth`, `receiving_concept`, `receiving_scheme`, `rushing`, `blocking`, `pass_blocking`, `run_blocking`, `defense`, `pass_rush`, `run_defense`, `coverage`, `coverage_scheme`, `slot_coverage`, `prp`, `field_goals`.
 ### NCAAF context (coaching & roster experience)
@@ -76,6 +77,18 @@ a proven coach arriving at a new school is a signal the market prices slowly (Ci
 +27.1 career residual carried from James Madison to Indiana). Always relay
 `seasons_of_history` — short history means *uncertain*, not average. Full detail in
 [NCAAF.md](NCAAF.md).
+
+### Cross-league player identity
+
+| Table | Rows | What it is |
+|---|---|---|
+| `player_career_links` | 1,663 | `ncaaf:<espn_id>` ↔ `nfl:<gsis_id>` for the same human, built from **ESPN athlete ids, which persist from college to the pros** — exact, no fuzzy matching |
+
+**AI context:** the same person holds two canonical ids because college and pro data come
+from different sources. This is what makes "what did this rookie do in college"
+answerable (`GET /players/{id}/college`). 72 links have disagreeing names — `Cam`/`Cameron`,
+`Nate`/`Nathan`, suffixes, `M.J.`/`MJ` — all the same people, and precisely the cases a
+name matcher drops. `name_agrees` is surfaced, not hidden.
 
 ### Venues & conditions
 

@@ -34,6 +34,9 @@ from youredge.pff_splits import derive_splits
 log = logging.getLogger(__name__)
 
 DATA_DIR = Path("/app/data/pff")
+# League is carried by directory, not filename, so the 1,500 existing NFL files keep
+# working unchanged: data/pff/*.json is NFL, data/pff/ncaa/*.json is college.
+NCAA_DIR = DATA_DIR / "ncaa"
 FNAME = re.compile(r"^(?P<facet>[a-z_]+)_(?P<season>\d{4})(?:_wk(?P<week>\d+))?\.(?P<ext>csv|json)$")
 
 # Candidate PFF header names per typed column (first match wins, case-insensitive).
@@ -80,8 +83,14 @@ TEAM_ALIASES = {"ARZ": "ARI", "BLT": "BAL", "CLV": "CLE", "HST": "HOU",
                 "SD": "LAC", "OAK": "LV", "SL": "LA"}
 
 
-def _team_id(abbr) -> str | None:
-    if abbr is None or pd.isna(abbr):
+def _team_id(abbr, league: str = "nfl") -> str | None:
+    """PFF team abbreviation -> canonical team_id.
+
+    NFL only. PFF's college team names are truncated ('S JOSE ST', 'N TEXAS') and do
+    not normalize onto CFBD's, so college teams must resolve through a
+    franchise_id-keyed crosswalk instead — see the guard in main().
+    """
+    if abbr is None or pd.isna(abbr) or league != "nfl":
         return None
     a = str(abbr).upper()
     return f"nfl:{TEAM_ALIASES.get(a, a)}"
@@ -112,7 +121,7 @@ def _snap_col(df: pd.DataFrame) -> str | None:
 
 
 async def ingest_file(conn, path: Path, alias_map: dict, team_by_player: dict,
-                      pff_id_map: dict) -> tuple[int, int]:
+                      pff_id_map: dict, league: str = "nfl") -> tuple[int, int]:
     m = FNAME.match(path.name)
     if not m:
         log.warning("skipping %s (name must be <facet>_<season>[_wk<N>].csv)", path.name)
@@ -144,7 +153,7 @@ async def ingest_file(conn, path: Path, alias_map: dict, team_by_player: dict,
             key = normalize_name(str(row[name_col]))
             pids = alias_map.get(key, [])
             if len(pids) > 1 and team_col:
-                team = _team_id(row[team_col])
+                team = _team_id(row[team_col], league)
                 pids = [p for p in pids if team_by_player.get(p) == team] or pids
             if len(pids) == 1:
                 pid = pids[0]
@@ -179,7 +188,7 @@ async def ingest_file(conn, path: Path, alias_map: dict, team_by_player: dict,
             """),
             {
                 "pid": pids[0], "season": season, "week": week, "facet": facet,
-                "team": _team_id(row.get(team_col)) if team_col else None,
+                "team": _team_id(row.get(team_col), league) if team_col else None,
                 "snaps": int(snaps) if snaps is not None else None,
                 "slot": num("slot_rate"),
                 "wide": num("wide_rate"),
@@ -209,7 +218,8 @@ async def main():
         alias_map: dict[str, list[str]] = {}
         team_by_player: dict[str, str] = {}
         for pid, name, team in await conn.execute(text(
-                "SELECT player_id, name, team_id FROM players WHERE league='nfl'")):
+                "SELECT player_id, name, team_id FROM players WHERE league = :lg"),
+                {"lg": "nfl"}):
             alias_map.setdefault(normalize_name(name), []).append(pid)
             if team:
                 team_by_player[pid] = team
@@ -219,7 +229,32 @@ async def main():
         log.info("pff id map: %d players", len(pff_id_map))
 
         for path in sorted([*DATA_DIR.glob("*.csv"), *DATA_DIR.glob("*.json")]):
-            await ingest_file(conn, path, alias_map, team_by_player, pff_id_map)
+            await ingest_file(conn, path, alias_map, team_by_player, pff_id_map, "nfl")
+
+        # College files are refused rather than name-matched. PFF college player ids
+        # are a separate id space with no crosswalk to CFBD, and the name fallback
+        # does not merely fail - it succeeds wrongly, writing college production into
+        # same-named NFL players' rows. Observed: 22 of 50 college receivers matched
+        # NFL players and overwrote them. Refusing is the only safe default until a
+        # pff_ncaa_player crosswalk exists.
+        ncaa_files = sorted([*NCAA_DIR.glob("*.csv"), *NCAA_DIR.glob("*.json")]) \
+            if NCAA_DIR.exists() else []
+        if ncaa_files:
+            has_xwalk = (await conn.execute(text(
+                "SELECT 1 FROM entity_xwalk WHERE entity_type='player' "
+                "AND source='pff_ncaa' LIMIT 1"))).first()
+            if not has_xwalk:
+                log.error(
+                    "%d college PFF file(s) in %s skipped: no 'pff_ncaa' player "
+                    "crosswalk exists yet. Build the franchise_id team crosswalk and "
+                    "the jersey-validated player crosswalk first - name matching "
+                    "would corrupt NFL rows.", len(ncaa_files), NCAA_DIR)
+            else:
+                ncaa_ids = {r[0]: r[1] for r in await conn.execute(text(
+                    "SELECT source_id, canonical_id FROM entity_xwalk "
+                    "WHERE entity_type='player' AND source='pff_ncaa'"))}
+                for path in ncaa_files:
+                    await ingest_file(conn, path, {}, {}, ncaa_ids, "ncaaf")
 
         # Weekly rows -> canonical game via (season, week, team), either side
         await conn.execute(text("""

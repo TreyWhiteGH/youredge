@@ -1,6 +1,6 @@
 # YourEdge — Data & Capability Reference
 
-*Updated 2026-08-23. Written for humans and for the Phase-3 LLM layer: every table
+*Updated 2026-08-23 (rev 2). Written for humans and for the Phase-3 LLM layer: every table
 and endpoint below is a tool the Narrator/Planner can query, and the "AI context"
 notes say when to reach for each. The core contract holds everywhere: **the Engine
 computes every number; the LLM selects and explains.***
@@ -50,8 +50,16 @@ computes every number; the LLM selects and explains.***
 
 **AI context:** game logs answer "how has X performed" with official numbers — quote these, not sums over play-by-play. Target share + air-yards share are the prop layer's usage inputs. PFF is the layer free data can't reach: true alignment percentages, offensive-line measurement, coverage-allowed stats, and pressure splits. Snap counts + depth chart power "who plays, who's next"; injuries gate recommendations, they are never speculated about.
 
+**PFF college is refused, not merely absent.** The API works (`league=ncaa`, all 22
+facets), but PFF's college player ids are a separate id space with no crosswalk, and the
+name fallback doesn't fail — it succeeds *wrongly*: a controlled test wrote 22 of 50
+college receivers into same-named NFL players' rows. The ingest now carries league by
+directory (`data/pff/` = NFL, `data/pff/ncaa/` = college) and **refuses college files
+until a `pff_ncaa` player crosswalk exists**. Enabling it needs a `franchise_id`-keyed
+team crosswalk (PFF truncates college names to `S JOSE ST`) plus jersey-validated
+player matching.
+
 **PFF facets loaded (NFL):** `passing`, `passing_depth`, `passing_pressure`, `passing_concept`, `time_in_pocket`, `allowed_pressure`, `receiving`, `receiving_depth`, `receiving_concept`, `receiving_scheme`, `rushing`, `blocking`, `pass_blocking`, `run_blocking`, `defense`, `pass_rush`, `run_defense`, `coverage`, `coverage_scheme`, `slot_coverage`, `prp`, `field_goals`.
-y
 ### NCAAF context (coaching & roster experience)
 
 | Table | Rows | What it is |

@@ -48,6 +48,66 @@ nflverse injury reports + ESPN APIs for status. **Rule: injuries gate recommenda
 
 ---
 
+---
+
+## Status — 2026-08-23
+
+**Phase 0 is complete and substantially exceeded.** The data layer went well past the
+original scope; the simulator has not started. NFL Week 1 is ~2 weeks out, so the
+Week-1 fallback in the risk section below is now the live plan: ship Modes 3 and 4 on
+historical queries and de-vigged market math, hold Mode 1's edge claims until the sim
+calibrates.
+
+### Built
+
+| Layer | State |
+|---|---|
+| Play-by-play | NFL 148k (2023–25, enriched: EPA/WPA/success/air yards/dropback/location); NCAAF 488k (2023–25, CFBD PPA) |
+| Odds | 53k snapshots, both leagues, `implied_prob` + de-vigged `fair_prob`; NCAAF closing lines back to **2016** |
+| PFF (NFL) | **359,513 rows**, 22 facets, weekly + season, 100% game-linked — pressure splits, true alignment %, OL protection, coverage-allowed |
+| Player identity | NFL 4,619 (nflverse) + NCAAF 40,602 (CFBD/ESPN ids), exact-id crosswalks |
+| Player production | 234,430 game logs both leagues |
+| NCAAF context | Coaching **tracked by coach, not school** (portable career residual incl. hand-seeded FCS stints), returning production, portal, talent, SP+ — 2016–2026 |
+| Venues | 893 venues incl. elevation; per-game roof/surface/temp/wind/neutral-site |
+| Feature pipeline | As-of builder with verified no-lookahead; NFL 474 complete-case rows, NCAAF 7,361 |
+
+### Two models, one base
+
+The architecture is settled: shared scaffolding (as-of guarantee, one target definition
+— margin residual vs the closing spread, one train/eval harness, weights stored as data
+in `model_runs`/`model_weights`), but **each league declares its own feature list**.
+They are not variations on a theme:
+
+- **NFL** — deep features, thin sample (474 usable). Signal is accumulated in-season
+  form plus the PFF layer.
+- **NCAAF** — thinner features, deep sample (7,361 usable, 2016–2025). Signal is
+  preseason context: who is coaching, how much production returned, recruited talent.
+
+Pooling them would be actively wrong. NCAAF `epa` holds CFBD's PPA, which averages
+0.178 against the NFL's −0.004 — different measurements wearing the same column name.
+
+**No models have been trained.** This is data and pipeline only.
+
+### Honest gaps
+
+- **NCAAF props** — market confirmed live (5–6 books, anytime TD densest); costs Odds
+  API credits. Unblocked now that player identity exists.
+- **PFF college** — the API works (`league=ncaa`, all 22 facets), but ingestion is
+  **deliberately refused** until a `pff_ncaa` player crosswalk exists. PFF college ids
+  are a separate id space and name matching doesn't fail, it succeeds wrongly: a test
+  wrote 22 of 50 college receivers into same-named NFL players' rows. Needs a
+  `franchise_id` team crosswalk (PFF truncates college names to `S JOSE ST`) plus
+  jersey-validated player matching.
+- **Weather** — CFBD's endpoint is paywalled ($10/mo tier). Venue elevation/dome/surface
+  are loaded; live conditions are not.
+- **NCAAF injuries** — structurally unobtainable. No mandatory college injury report and
+  no snap counts, so unlike the NFL there isn't even an after-the-fact proxy.
+- **NFL sample depth** — 474 usable games is the binding constraint on that side.
+  nflverse PBP goes back to 1999 and PFF NFL to 1994; backfilling is the highest-leverage
+  fix if a game-level NFL model is ever wanted.
+
+---
+
 ## Phase 0 — Foundation (now → Aug 1) ~2 weeks
 
 Stack: Python/Flask or FastAPI, Postgres (add TimescaleDB later for odds snapshots), Redis (you know all of this — no new infra learning curve).

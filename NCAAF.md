@@ -1,6 +1,6 @@
 # YourEdge — NCAAF Data Reference
 
-*Updated 2026-08-23. Companion to [CAPABILITIES.md](CAPABILITIES.md), which covers the
+*Updated 2026-08-23 (rev 2). Companion to [CAPABILITIES.md](CAPABILITIES.md), which covers the
 whole system. This file is the college-specific view: what's loaded, why it's shaped
 this way, and what it can and cannot answer.*
 
@@ -131,9 +131,12 @@ per-season transaction boundary means you simply re-run the failed seasons.
   market side costs Odds API credits and hasn't been pulled.
 - **`rz_td_rate` is NULL for NCAAF** — the `touchdown` flag is an nflverse-only column
   and CFBD's equivalent is lost in our play-type mapping. Needs a plays re-ingest.
-- **No PFF college data** — same API (`league=ncaa`), all 22 facets confirmed present,
-  but it needs a logged-in session and a `franchise_id`-keyed team crosswalk because
-  PFF's college team names are truncated (`S JOSE ST`, `N TEXAS`). Phase 2.
+- **No PFF college data, and the ingest refuses it on purpose.** The API works
+  (`league=ncaa`, 22 facets), but college player ids are a separate id space and the
+  name fallback misattributes rather than failing — a test wrote 22 of 50 college
+  receivers into same-named NFL players' rows. College files live in `data/pff/ncaa/`
+  and are skipped with an explicit error until a `pff_ncaa` crosswalk exists
+  (`franchise_id` team match, then jersey-validated player match).
 - **No learned weighting yet.** Whether coaching or continuity dominates is contextual;
   that gets fit from data rather than asserted. **No models exist yet — this is all data
   and pipeline.**

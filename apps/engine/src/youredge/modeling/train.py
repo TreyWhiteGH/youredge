@@ -29,16 +29,62 @@ log = logging.getLogger(__name__)
 
 # Differentials, not raw sides: the market prices the matchup, so the model should see
 # the same thing. Keeps the feature count low, which matters at this sample size.
-FEATURES = [
+# The shared base: play-derived form, rest, and the market's own number. Both leagues
+# have these and both models use them.
+BASE_FEATURES = [
     "off_epa_diff", "def_epa_diff", "off_pass_epa_diff", "off_rush_epa_diff",
     "def_pass_epa_diff", "def_rush_epa_diff", "off_success_diff", "pass_rate_diff",
     "prev_off_epa_diff", "prev_def_epa_diff", "rest_diff", "closing_spread",
 ]
-MIN_PRIOR_GAMES = 3  # before this, in-season form is noise pretending to be signal
+
+# Two models, one base. What each league adds is genuinely different, so the feature
+# sets diverge here rather than being forced into a single list that would be half
+# missing for whichever league you are training.
+#
+# NCAAF's additions come from game_features.features (JSONB) and are known before
+# kickoff: who is coaching, how much production returned, recruited talent, altitude.
+# NFL's additions (PFF pressure/protection, NGS, usage) are not wired into
+# game_features yet — when they are, they belong in this dict, not in BASE_FEATURES.
+EXTRA_FEATURES = {
+    "nfl": [],
+    "ncaaf": [
+        "coach_resid_diff", "coach_history_min", "pct_ppa_diff", "usage_diff",
+        "talent_diff", "recruiting_diff", "sp_prev_diff", "elevation",
+    ],
+}
+
+# Each league declares its OWN list rather than inheriting all of BASE_FEATURES.
+# That is the whole point of two models: NFL's signal is accumulated in-season form,
+# which it has for every game; NCAAF's is preseason context, which it has back to 2016
+# while its play data starts in 2023. Forcing college to require play-derived form
+# would throw away 7 of its 10 seasons - 8,576 usable games down to 1,043 - to satisfy
+# a shared column list that buys it nothing.
+FEATURES_BY_LEAGUE = {
+    "nfl": BASE_FEATURES,
+    "ncaaf": ["closing_spread"] + EXTRA_FEATURES["ncaaf"],
+}
+
+# Features where NULL means "no track record" rather than "unknown value". Filled with
+# a neutral 0 and paired with a _known indicator, so the model can separate a coach
+# with a genuinely average residual from one who has never been a head coach.
+NEUTRAL_FILL = {"coach_resid_diff", "coach_history_min"}
+
+# Before this many games, in-season form is noise pretending to be signal. NCAAF is
+# exempt because its extra features are preseason facts, not accumulated form — the
+# 2016-2022 college rows have no play data at all and would otherwise be discarded.
+MIN_PRIOR_GAMES = {"nfl": 3, "ncaaf": 0}
 
 
-def build_frame(rows: list[dict]) -> pd.DataFrame:
+def build_frame(rows: list[dict], extra: list[str] | None = None) -> pd.DataFrame:
     df = pd.DataFrame(rows)
+    # Lift league-specific JSONB keys into columns; booleans become 0/1 so the
+    # linear model can use them.
+    for key in extra or []:
+        df[key] = [
+            (float(v) if not isinstance(v, bool) else float(v))
+            if (v := (r.get("features") or {}).get(key)) is not None else None
+            for r in rows
+        ]
     for base in ("off_epa", "def_epa", "off_pass_epa", "off_rush_epa",
                  "def_pass_epa", "def_rush_epa", "off_success", "pass_rate"):
         df[f"{base}_diff"] = df[f"home_{base}"] - df[f"away_{base}"]
@@ -51,16 +97,32 @@ def build_frame(rows: list[dict]) -> pd.DataFrame:
 async def train(league: str, holdout_season: int) -> dict:
     engine = get_engine()
     async with engine.begin() as conn:
+        minp = MIN_PRIOR_GAMES[league]
         rows = [dict(r) for r in (await conn.execute(
             text("""
                 SELECT * FROM game_features
                 WHERE league = :league AND spread_residual IS NOT NULL
-                  AND home_prior_games >= :minp AND away_prior_games >= :minp
+                  AND COALESCE(home_prior_games, 0) >= :minp
+                  AND COALESCE(away_prior_games, 0) >= :minp
             """),
-            {"league": league, "minp": MIN_PRIOR_GAMES},
+            {"league": league, "minp": minp},
         )).mappings()]
 
-        df = build_frame(rows).dropna(subset=FEATURES + ["spread_residual"])
+        features = [f for f in FEATURES_BY_LEAGUE[league] if True]
+        df = build_frame(rows, EXTRA_FEATURES[league])
+
+        # Neutral-fill before dropping, so "first-time head coach" survives as a row
+        # with an explicit indicator instead of vanishing from the sample.
+        FEATURES = []
+        for f in features:
+            if f not in df.columns:
+                continue
+            if f in NEUTRAL_FILL:
+                df[f + "_known"] = df[f].notna().astype(float)
+                df[f] = df[f].fillna(0.0)
+                FEATURES.append(f + "_known")
+            FEATURES.append(f)
+        df = df.dropna(subset=FEATURES + ["spread_residual"])
         train_df = df[df.season != holdout_season]
         test_df = df[df.season == holdout_season]
         log.info("train %d games (seasons %s) | holdout %d games (%d)",

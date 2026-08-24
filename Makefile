@@ -71,3 +71,9 @@ ingest-cfbd-player-stats:
 
 ingest-venues:
 	docker compose run --rm ingest python -m youredge.ingest.venues --seasons 2023 2024 2025 2026
+
+features-ncaaf:
+	docker compose run --rm ingest python -m youredge.modeling.features --league ncaaf --seasons 2016 2017 2018 2019 2020 2021 2022 2023 2024 2025
+
+features-nfl:
+	docker compose run --rm ingest python -m youredge.modeling.features --league nfl --seasons 2023 2024 2025

@@ -13,9 +13,9 @@ computes every number; the LLM selects and explains.***
 
 | Table | Rows | What it is |
 |---|---|---|
-| `teams` | 280 | Canonical teams, both leagues. `team_id` like `nfl:BAL`, `ncaaf:59`. `classification` marks FBS (138) vs FCS (105) for NCAAF. |
-| `players` | 45,221 | NFL (4,619) `nfl:<gsis_id>` + NCAAF (40,602) `ncaaf:<espn_athlete_id>`, the id space CFBD's roster and stats endpoints share. `jersey`/`class_year` carried for college as match validators. Carries `position`, `team_id`, and `ngs_position` (NGS tracking-derived alignment: `SLOT_WR`, `SLOT_CB`, `HIGH_SAFETY`). |
-| `entity_xwalk` | 25,780 | Translation between external ID systems and canonical IDs. Sources: `cfbd`, `odds_api`, `cfbd_alias`/`nflverse_alias` (normalized names), `espn`, `pfr`, `pff`. |
+| `teams` | 285 | Canonical teams, both leagues. `team_id` like `nfl:BAL`, `ncaaf:59`. `classification` marks FBS (138) vs FCS (105) for NCAAF. |
+| `players` | 49,426 | NFL (4,619) `nfl:<gsis_id>` + NCAAF (44,807) `ncaaf:<espn_athlete_id>`, the id space CFBD's roster and stats endpoints share. `jersey`/`class_year` carried for college as match validators. Carries `position`, `team_id`, and `ngs_position` (NGS tracking-derived alignment: `SLOT_WR`, `SLOT_CB`, `HIGH_SAFETY`). |
+| `entity_xwalk` | 128,444 | Translation between external ID systems and canonical IDs. Sources: `cfbd`, `odds_api`, `cfbd_alias`/`nflverse_alias`/`ncaaf_alias`/`ncaaf_alias_team` (normalized names), `espn`, `pfr`, `pff`. College aliases dominate the count: ~22k players/season need team-scoped keys. |
 
 **AI context:** never invent an identifier. "Lamar" → `/players?q=` → canonical id → every other surface keys off it. Player IDs resolve *exactly* via `pff`/`espn` crosswalk rows, which is what keeps QB Josh Allen distinct from the Jaguars linebacker. If the crosswalk can't resolve something, the answer is "we can't link this," never a guess.
 
@@ -23,7 +23,7 @@ computes every number; the LLM selects and explains.***
 
 | Table | Rows | What it is |
 |---|---|---|
-| `games` | 4,777 | Both leagues, 2023–2025 complete (incl. playoffs/CFP) plus 2026 schedules. `season_type` separates postseason; `notes` names bowls/CFP rounds (filter `ILIKE 'CFP%' OR ILIKE 'College Football Playoff%'`). |
+| `games` | 10,647 | NFL 2023–2026; **NCAAF 2016–2026** (labels backfilled for training). Complete incl. playoffs/CFP. `season_type` separates postseason; `notes` names bowls/CFP rounds (filter `ILIKE 'CFP%' OR ILIKE 'College Football Playoff%'`). |
 | `plays` | 635,436 | The modeling foundation. NFL rows (148k) enriched: `epa`, `wpa`, `success`, `complete_pass`, `interception`, `touchdown`, `air_yards`, `yards_after_catch`, `qb_dropback`, `qb_scramble`, `pass_location`, `run_location`, `field_goal_result`, score state, clock. NCAAF rows (488k) carry `ppa` in the `epa` column (CFBD's analog — different scale, **never mix leagues in one aggregate**) and `success` backfilled as `epa > 0`; `qb_dropback`/`touchdown` are nflverse-only and stay NULL. |
 
 **AI context:** every tendency, clutch metric, and script prior computes **from** this table — never quote a stat that doesn't trace here or to an official aggregate. Mode 3 hypothesis testing ("does NY's run defense fade in Q4?") is a query over `plays`, not an opinion.
@@ -67,7 +67,7 @@ then, `data/pff/ncaa/` files are skipped with an explicit error.
 |---|---|---|
 | `coaches` | 374 | `cfbd_coach:<id>`, `history_seasons` = FBS seasons visible |
 | `coach_seasons` | 1,583 | PK `(coach_id, team_id, season)` — **a coach changing schools is a new row, not a new coach**, so the signal travels with him. `source` marks CFBD facts vs hand-seeded FCS stints |
-| `coach_features` | 1,571 | The portable signal: `career_sp_residual` (SP+ minus what his talent predicted, over all prior seasons **anywhere**), `prior_school_trajectory`, `seasons_of_history`, `arrived_this_season`, plus `fcs_*` sub-FBS record as a **separate** feature |
+| `coach_features` | 1,581 | The portable signal: `career_sp_residual` (SP+ minus what his talent predicted, over all prior seasons **anywhere**), `prior_school_trajectory`, `seasons_of_history`, `arrived_this_season`, plus `fcs_*` sub-FBS record as a **separate** feature |
 | `team_season_context` | 1,434 | 2016–2026 returning production (`pct_ppa` + splits, `usage`), `talent`, recruiting, SP+, `portal_in/out` (**NULL pre-2021, not zero**) |
 | `transfers` | 23,358 | Portal detail 2021–2026, origin/destination/stars |
 
@@ -94,7 +94,7 @@ name matcher drops. `name_agrees` is surfaced, not hidden.
 
 | Table | Rows | What it is |
 |---|---|---|
-| `venues` | 893 | 852 NCAAF (with **elevation** — Laramie 2,200m) + 41 NFL. Statics only: location, capacity, dome, grass |
+| `venues` | 899 | 852 NCAAF (with **elevation** — Laramie 2,200m) + 47 NFL. Statics only: location, capacity, dome, grass |
 | `games.*` | — | Per-game `venue_id`, `roof`, `surface`, `temp`, `wind`, `neutral_site` |
 
 **AI context:** roof and surface are game-level, not venue-level — retractable roofs open

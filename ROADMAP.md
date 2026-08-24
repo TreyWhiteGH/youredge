@@ -65,10 +65,11 @@ calibrates.
 | Play-by-play | NFL 148k (2023–25, enriched: EPA/WPA/success/air yards/dropback/location); NCAAF 488k (2023–25, CFBD PPA) |
 | Odds | 53k snapshots, both leagues, `implied_prob` + de-vigged `fair_prob`; NCAAF closing lines back to **2016** |
 | PFF (NFL) | **359,513 rows**, 22 facets, weekly + season, 100% game-linked — pressure splits, true alignment %, OL protection, coverage-allowed |
-| Player identity | NFL 4,619 (nflverse) + NCAAF 40,602 (CFBD/ESPN ids), exact-id crosswalks |
+| Player identity | NFL 4,619 (nflverse) + NCAAF 44,807 (CFBD/ESPN ids), exact-id crosswalks |
 | Player production | 234,430 game logs both leagues |
 | NCAAF context | Coaching **tracked by coach, not school** (portable career residual incl. hand-seeded FCS stints), returning production, portal, talent, SP+ — 2016–2026 |
-| Venues | 893 venues incl. elevation; per-game roof/surface/temp/wind/neutral-site |
+| Venues | 899 venues incl. elevation; per-game roof/surface/temp/wind/neutral-site |
+| Career links | 1,663 exact `ncaaf:` ↔ `nfl:` player links via ESPN athlete ids, which persist college→pro. Makes "what did this rookie do in college" answerable |
 | Feature pipeline | As-of builder with verified no-lookahead; NFL 474 complete-case rows, NCAAF 7,361 |
 
 ### Two models, one base
@@ -93,11 +94,13 @@ Pooling them would be actively wrong. NCAAF `epa` holds CFBD's PPA, which averag
 - **NCAAF props** — market confirmed live (5–6 books, anytime TD densest); costs Odds
   API credits. Unblocked now that player identity exists.
 - **PFF college** — the API works (`league=ncaa`, all 22 facets), but ingestion is
-  **deliberately refused** until a `pff_ncaa` player crosswalk exists. PFF college ids
-  are a separate id space and name matching doesn't fail, it succeeds wrongly: a test
-  wrote 22 of 50 college receivers into same-named NFL players' rows. Needs a
-  `franchise_id` team crosswalk (PFF truncates college names to `S JOSE ST`) plus
-  jersey-validated player matching.
+  **deliberately refused** until a `pff_ncaa` player crosswalk exists. The hazard is
+  level conflation, not mistaken identity: PFF uses **one player id per human across
+  college and the pros**, so a 2024 college receiver since drafted resolves to the
+  *correct* person and his college game lands as NFL production (17 of 22 on a test
+  did exactly that). `pff_player_stats.level` now lets both coexist, but college rows
+  belong under `ncaaf:` ids, which needs a `franchise_id` team crosswalk (PFF truncates
+  college names to `S JOSE ST`) plus jersey-validated player matching.
 - **Weather** — CFBD's endpoint is paywalled ($10/mo tier). Venue elevation/dome/surface
   are loaded; live conditions are not.
 - **NCAAF injuries** — structurally unobtainable. No mandatory college injury report and

@@ -1,6 +1,6 @@
 # YourEdge — NCAAF Data Reference
 
-*Updated 2026-08-23 (rev 2). Companion to [CAPABILITIES.md](CAPABILITIES.md), which covers the
+*Updated 2026-08-23 (rev 3). Companion to [CAPABILITIES.md](CAPABILITIES.md), which covers the
 whole system. This file is the college-specific view: what's loaded, why it's shaped
 this way, and what it can and cannot answer.*
 
@@ -47,9 +47,10 @@ visible beforehand in data we now store.
 | `team_season_context` | 1,434 | 2016–2026 | returning production, talent, recruiting, SP+, portal |
 | `transfers` | 23,358 | **2021–2026** | portal detail; CFBD has nothing before 2021 |
 | `odds_snapshots` (ncaaf) | ~120k | **2016–2026** | historical closing lines + live 2026 openers |
-| `players` (ncaaf) | 40,602 | 2023–2026 | `ncaaf:<espn_athlete_id>`, with jersey + class year |
+| `players` (ncaaf) | 44,807 | 2023–2026 | `ncaaf:<espn_athlete_id>`, with jersey + class year |
 | `player_game_stats` (ncaaf) | 177,448 | 2023–2025 | from `/games/players`; no targets/air-yards/EPA (CFBD doesn't report them) |
 | `venues` (ncaaf) | 852 | current | incl. **elevation** — Laramie 2,200m |
+| `player_career_links` | 1,663 | 2023–2026 | `ncaaf:` ↔ `nfl:` for the same human, via ESPN athlete ids |
 
 ### `coach_features` — the portable signal
 
@@ -132,11 +133,14 @@ per-season transaction boundary means you simply re-run the failed seasons.
 - **`rz_td_rate` is NULL for NCAAF** — the `touchdown` flag is an nflverse-only column
   and CFBD's equivalent is lost in our play-type mapping. Needs a plays re-ingest.
 - **No PFF college data, and the ingest refuses it on purpose.** The API works
-  (`league=ncaa`, 22 facets), but college player ids are a separate id space and the
-  name fallback misattributes rather than failing — a test wrote 22 of 50 college
-  receivers into same-named NFL players' rows. College files live in `data/pff/ncaa/`
-  and are skipped with an explicit error until a `pff_ncaa` crosswalk exists
-  (`franchise_id` team match, then jersey-validated player match).
+  (`league=ncaa`, 22 facets). The hazard is *level conflation*, not mistaken identity:
+  PFF assigns **one player id per human across college and the pros**, so a 2024 college
+  receiver since drafted resolves to the correct person through the NFL crosswalk and
+  his college game is then stored as NFL production — 17 of 22 on a controlled test.
+  `pff_player_stats.level` now lets both levels coexist, but college rows belong under
+  `ncaaf:` ids. Files in `data/pff/ncaa/` are skipped with an explicit error until a
+  `pff_ncaa` crosswalk exists (`franchise_id` team match, then jersey-validated player
+  match).
 - **No learned weighting yet.** Whether coaching or continuity dominates is contextual;
   that gets fit from data rather than asserted. **No models exist yet — this is all data
   and pipeline.**
@@ -163,6 +167,30 @@ inverse: the context reaches back to 2016 and now the labels do too.
 | Prop market history | **not loaded** (costs credits) |
 | Weather | **paywalled** |
 | Injuries | **unobtainable** |
+
+## College players who reach the NFL
+
+The same human holds two canonical ids — `ncaaf:<espn_athlete_id>` for his college career
+and `nfl:<gsis_id>` for his pro one — because the two come from different sources. That
+split is correct, but on its own nothing joins a rookie to the production he was drafted
+on.
+
+**ESPN athlete ids persist from college to the pros**, and we already store them for NFL
+players, so the bridge is exact: 1,663 links, no fuzzy matching, no thresholds.
+
+```bash
+curl -s "http://localhost:8000/api/nfl/players/nfl:00-0040876/college"
+```
+
+Elijah Sarratt (Ravens WR) → Indiana, 80 receptions for 1,162 yards in 2023.
+
+72 links have disagreeing names — `Cam`/`Cameron` Camper, `Nate`/`Nathan` Carter, suffix
+differences, `M.J.`/`MJ` Devonshire. All the same people, and precisely the cases a name
+matcher would drop. `name_agrees` is returned rather than hidden.
+
+**Limit:** links exist only where the college career falls inside our 2023+ roster
+window. A veteran drafted in 2019 has no college side to link to, and the endpoint says
+so explicitly rather than returning an empty result.
 
 ## Caveats the AI layer must inherit
 

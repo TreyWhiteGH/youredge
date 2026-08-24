@@ -3,6 +3,7 @@
 GET /players?q=mahomes                 name search (alias-normalized)
 GET /players/{player_id}               bio + season aggregates (+ NGS if QB)
 GET /players/{player_id}/gamelog       weekly rows from player_game_stats
+GET /players/{player_id}/college       NFL player -> his college career (ESPN-id link)
 GET /players/{player_id}/vs-opponent   splits by opponent (optionally one team)
 GET /players/{player_id}/plays         enriched PBP involving the player
 GET /players/{player_id}/clutch        QB clutch surface (late&close, 2-min, drives)
@@ -41,12 +42,18 @@ async def search_players(q: str = Query(min_length=2), limit: int = 10):
     async with get_engine().connect() as conn:
         rows = (await conn.execute(
             text("""
-                SELECT DISTINCT p.player_id, p.name, p.position, p.team_id
+                SELECT DISTINCT p.player_id, p.league, p.name, p.position, p.team_id,
+                       EXISTS (SELECT 1 FROM player_career_links l
+                               WHERE l.nfl_player_id = p.player_id
+                                  OR l.ncaaf_player_id = p.player_id) AS has_career_link
                 FROM players p
                 LEFT JOIN entity_xwalk x ON x.entity_type = 'player'
-                     AND x.source = 'nflverse_alias' AND x.canonical_id = p.player_id
+                     AND x.source IN ('nflverse_alias', 'ncaaf_alias')
+                     AND x.canonical_id = p.player_id
                 WHERE p.name ILIKE '%' || :q || '%' OR x.source_id LIKE :norm || '%'
-                ORDER BY p.name LIMIT :lim
+                -- NFL first: a name in both leagues is usually being asked about as a
+                -- pro, and has_career_link tells the caller the other half exists.
+                ORDER BY p.league DESC, p.name LIMIT :lim
             """),
             {"q": q, "norm": norm, "lim": limit},
         )).mappings().all()
@@ -181,6 +188,59 @@ async def player_pff(
             {"pid": player_id, "seasons": seasons, **({"facet": facet} if facet else {})},
         )).mappings().all()
     return {"player_id": player_id, "rows": [dict(r) for r in rows]}
+
+
+@router.get("/players/{player_id}/college")
+async def player_college(player_id: str):
+    """An NFL player's college career, via the ESPN-id career link.
+
+    The same human holds two canonical ids here (ncaaf:<espn> and nfl:<gsis>) because
+    they come from different sources. This resolves across that boundary — which is
+    what makes "what did this rookie do in college" answerable at all.
+    """
+    async with get_engine().connect() as conn:
+        bio = await _player_or_404(conn, player_id)
+        link = (await conn.execute(
+            text("""
+                SELECT l.ncaaf_player_id, l.name_agrees, p.name, p.position,
+                       p.jersey, p.class_year, t.name AS school
+                FROM player_career_links l
+                JOIN players p ON p.player_id = l.ncaaf_player_id
+                LEFT JOIN teams t ON t.team_id = p.team_id
+                WHERE l.nfl_player_id = :pid
+            """),
+            {"pid": player_id},
+        )).mappings().first()
+        if link is None:
+            raise HTTPException(
+                status_code=404,
+                detail=f"no college career linked for {player_id} "
+                       "(pre-2023 college careers are outside our roster window)")
+
+        seasons = (await conn.execute(
+            text("""
+                SELECT season, count(*) AS games,
+                       sum(attempts) AS attempts, sum(completions) AS completions,
+                       sum(passing_yards) AS passing_yards, sum(passing_tds) AS passing_tds,
+                       sum(carries) AS carries, sum(rushing_yards) AS rushing_yards,
+                       sum(rushing_tds) AS rushing_tds,
+                       sum(receptions) AS receptions, sum(receiving_yards) AS receiving_yards,
+                       sum(receiving_tds) AS receiving_tds
+                FROM player_game_stats
+                WHERE player_id = :cid GROUP BY season ORDER BY season
+            """),
+            {"cid": link["ncaaf_player_id"]},
+        )).mappings().all()
+
+    return {
+        **{k: bio[k] for k in ("player_id", "name", "position")},
+        "college": {k: link[k] for k in
+                    ("ncaaf_player_id", "name", "position", "jersey", "class_year", "school")},
+        # Surfaced rather than hidden: a differing name is nearly always formatting
+        # (Cam/Cameron, suffixes), not a bad link, but the caller should see it.
+        "name_agrees": link["name_agrees"],
+        "college_seasons": [dict(r) for r in seasons],
+    }
 
 
 @router.get("/players/{player_id}/vs-opponent")

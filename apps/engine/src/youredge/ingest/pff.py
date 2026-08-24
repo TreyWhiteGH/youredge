@@ -231,12 +231,15 @@ async def main():
         for path in sorted([*DATA_DIR.glob("*.csv"), *DATA_DIR.glob("*.json")]):
             await ingest_file(conn, path, alias_map, team_by_player, pff_id_map, "nfl")
 
-        # College files are refused rather than name-matched. PFF college player ids
-        # are a separate id space with no crosswalk to CFBD, and the name fallback
-        # does not merely fail - it succeeds wrongly, writing college production into
-        # same-named NFL players' rows. Observed: 22 of 50 college receivers matched
-        # NFL players and overwrote them. Refusing is the only safe default until a
-        # pff_ncaa_player crosswalk exists.
+        # College files are refused until a pff_ncaa crosswalk exists.
+        #
+        # The failure is subtler than a name collision. PFF uses ONE player_id per
+        # human across college and the pros, so a 2024 college receiver already in our
+        # NFL pff xwalk (because he has since been drafted) resolves to the RIGHT
+        # person - and then his college game is stored as NFL production. Observed on a
+        # 50-row test: 17 resolved by pff_id (correct human, wrong level), 5 by name.
+        # The level column now lets both coexist, but college rows still belong to the
+        # ncaaf: canonical id, which needs the crosswalk.
         ncaa_files = sorted([*NCAA_DIR.glob("*.csv"), *NCAA_DIR.glob("*.json")]) \
             if NCAA_DIR.exists() else []
         if ncaa_files:

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 28" width="168" height="28"
+     font-family="Inter, -apple-system, sans-serif">
+  <!-- Mark + wordmark lockup, for README headers and any surface that needs the
+       full name rather than the glyph alone. -->
+  <g transform="translate(2 2)">
+    <path d="M3.8 19.4 10.3 9.6l4.1 4.9 5.8-9.3" fill="none" stroke="#4c8dff"
+          stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M15.6 5.1h4.4v4.4" fill="none" stroke="#4c8dff"
+          stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="10.3" cy="9.6" r="1.9" fill="#2fcf8f"/>
+  </g>
+  <text x="32" y="19.5" font-size="17" font-weight="700" letter-spacing="-0.5"
+        fill="currentColor">YourEdge</text>
+</svg>

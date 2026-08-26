@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
+  <!-- YourEdge mark: an ascending edge breaking through, with the inflection point
+       marked. Same geometry as <Icon.Logo>, sized for a 16px favicon. -->
+  <rect width="24" height="24" rx="5.5" fill="#07090f"/>
+  <path d="M3.8 19.4 10.3 9.6l4.1 4.9 5.8-9.3" fill="none" stroke="#4c8dff"
+        stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M15.6 5.1h4.4v4.4" fill="none" stroke="#4c8dff"
+        stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="10.3" cy="9.6" r="1.9" fill="#2fcf8f"/>
+</svg>

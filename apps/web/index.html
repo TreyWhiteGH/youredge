@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <link rel="icon" type="image/svg+xml" href="/icons/mark.svg" />
+    <meta name="theme-color" content="#07090f" />
+    <meta name="description" content="YourEdge — football analytics engine. Play-by-play, PFF grades, de-vigged market prices." />
+    <title>YourEdge</title>
+    <script>
+      // Applied before first paint so the shell never flashes the wrong palette.
+      try {
+        var t = localStorage.getItem('ye.theme');
+        if (t) document.documentElement.setAttribute('data-theme', t);
+      } catch (e) {}
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

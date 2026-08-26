@@ -3,7 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "workspaces": [
-    "web",
-    "mobile"
-  ]
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "npm --workspace apps/web run dev",
+    "build": "npm --workspace apps/web run build"
+  }
 }

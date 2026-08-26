@@ -1,0 +1,116 @@
+/* ── Reset + primitives ─────────────────────────────────────────────────────── */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg-app);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overscroll-behavior-y: none;
+}
+
+h1, h2, h3, h4, p, figure { margin: 0; }
+h1, h2, h3, h4 { font-weight: 650; letter-spacing: -0.02em; }
+
+a { color: inherit; text-decoration: none; }
+
+button, input, select, textarea { font: inherit; color: inherit; }
+button { background: none; border: none; padding: 0; cursor: pointer; }
+button:disabled { cursor: not-allowed; }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+:focus:not(:focus-visible) { outline: none; }
+
+::selection { background: var(--accent-wash); color: var(--text-primary); }
+
+/* Thin, unobtrusive scrollbars — this app has a lot of scrollable panes. */
+* { scrollbar-width: thin; scrollbar-color: var(--border-loud) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--border-loud); border-radius: var(--r-pill);
+  border: 2px solid transparent; background-clip: content-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--text-faint); background-clip: content-box; }
+
+/* ── Type utilities ─────────────────────────────────────────────────────────── */
+
+.num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.eyebrow {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em;
+  text-transform: uppercase; color: var(--text-muted);
+}
+.muted { color: var(--text-muted); }
+.secondary { color: var(--text-secondary); }
+.tiny { font-size: 11px; }
+.small { font-size: 12px; }
+.truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.good { color: var(--good); }
+.bad { color: var(--bad); }
+.warn { color: var(--warn); }
+.accent { color: var(--accent); }
+
+/* ── Motion ─────────────────────────────────────────────────────────────────── */
+
+@keyframes ye-fade-up {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+@keyframes ye-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ye-spin { to { transform: rotate(360deg); } }
+@keyframes ye-shimmer { to { background-position-x: -200%; } }
+@keyframes ye-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.45; transform: scale(0.82); }
+}
+/* The tray is centred with translateX(-50%). A shared fade-up whose final keyframe is
+   `transform: none` would silently erase that offset — animation fills beat base rules —
+   so it gets a keyframe that carries the centring through. */
+@keyframes ye-tray-in {
+  from { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  to   { opacity: 1; transform: translateX(-50%); }
+}
+@keyframes ye-pop {
+  0%   { transform: scale(0.9); opacity: 0; }
+  60%  { transform: scale(1.03); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+.enter { animation: ye-fade-up 0.32s var(--ease-out) both; }
+
+/* Staggered entrance for grids and lists. Depth is capped at 12 so a 200-row table
+   doesn't end up with a four-second cascade. */
+.stagger > * { animation: ye-fade-up 0.34s var(--ease-out) both; }
+.stagger > *:nth-child(1)  { animation-delay: 0.00s; }
+.stagger > *:nth-child(2)  { animation-delay: 0.03s; }
+.stagger > *:nth-child(3)  { animation-delay: 0.06s; }
+.stagger > *:nth-child(4)  { animation-delay: 0.09s; }
+.stagger > *:nth-child(5)  { animation-delay: 0.12s; }
+.stagger > *:nth-child(6)  { animation-delay: 0.15s; }
+.stagger > *:nth-child(7)  { animation-delay: 0.18s; }
+.stagger > *:nth-child(8)  { animation-delay: 0.21s; }
+.stagger > *:nth-child(9)  { animation-delay: 0.24s; }
+.stagger > *:nth-child(10) { animation-delay: 0.27s; }
+.stagger > *:nth-child(11) { animation-delay: 0.30s; }
+.stagger > *:nth-child(n + 12) { animation-delay: 0.33s; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

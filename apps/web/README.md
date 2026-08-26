@@ -4,9 +4,12 @@ React + Vite front end for the football engine. It talks to one API and renders 
 that API returns; there is no second source of truth and no mock data anywhere in the
 bundle.
 
+This is an npm workspace, so dependencies install from the **repo root** — there is one
+lockfile there and none in this directory:
+
 ```bash
-npm install          # from this directory, or `npm install` at the repo root
-npm run dev          # http://localhost:5173
+npm install          # at the repo root
+npm run dev          # http://localhost:5173  (or `npm run dev` from the root)
 npm run build        # -> dist/
 ```
 

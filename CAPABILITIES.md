@@ -157,9 +157,77 @@ their league, so `/api/nfl/teams/ncaaf:59` returns **400** rather than an empty 
 Team cards under `/api/ncaaf/` rank **within FBS (138)** — FCS crossover opponents
 would otherwise pad the field to 237 and flatter every rank.
 
+### Slate, matchups & odds — `/api/nfl/*` and `/api/ncaaf/*`
+
+| Endpoint | AI context |
+|---|---|
+| `GET /teams` | Every team in the league. NCAAF defaults to FBS — the 105 FCS teams have no odds and no context rows. |
+| `GET /games` | The slate. Filter by `season`/`week`/`status`/`team_id`, or `upcoming=true`. Each game carries teams, per-game conditions, and the best book's current price line. |
+| `GET /games/{game_id}` | One matchup with every book that quotes it. |
+| `GET /games/{game_id}/odds` | Full board plus the snapshot time series — line movement, which is CLV's raw material. |
+
+Outcome strings are resolved to a side through the **`cfbd_alias` crosswalk**, not by
+comparing names: The Odds API writes `North Carolina Tar Heels` where `teams.name` is
+`North Carolina`, and string equality silently drops every college spread and moneyline
+while leaving Over/Under intact. An outcome that resolves to neither team is omitted
+rather than guessed at.
+
+Books are split into **live** (`draftkings`, `fanduel`, `betmgm`, `caesars`, `pinnacle`)
+and **archive** (`cfbd:*`, `nflverse:closing`). Archives are correct for backtests and
+wrong as "the current line", so they are only consulted when no live book has the game,
+and every response flags which kind it returned via `is_live_book`.
+
+### Coverage — `/api/football/*`
+
+| Endpoint | AI context |
+|---|---|
+| `GET /coverage` | Row counts per table, counted live, plus the capability roster with `available: true/false`. The web app renders this verbatim; hard-coding the numbers anywhere would let them drift the moment an ingest runs. |
+
 ### Stubs awaiting Phases 1–3 (501 with phase marker)
 
 `GET /odds` · `POST /sgp/generate` · `/sgp/build-around-pick` · `/sgp/test-hypothesis` · `/sgp/critique` · `/sgp/save` · `GET /sgp/history`
+
+---
+
+## 2.5 Web app (`apps/web`)
+
+React + Vite, three runtime dependencies, served at `localhost:5173` in dev with `/api`
+proxied to the engine. It is a view over the endpoints above and holds no second source
+of truth: **every number on screen came from an engine response.**
+
+| Surface | What it reads |
+|---|---|
+| Slate | `/{league}/games` grouped by day, with the best book's line |
+| Matchup | game detail, both unit cards ranked in one field, full odds board with movement |
+| Team | offense/defense cards, PFF unit grades, per-lineman protection, pass-rate heatmap; NCAAF swaps in coaching, returning production and portal |
+| Player | seasons, game log, PFF split facets, opponent splits, QB clutch, linked college career |
+| Compare | up to four teams as columns over the same ranked rows |
+| Bet Lab | the four SGP modes, calling the real endpoints and rendering their 501 |
+| Data | `/football/coverage`, verbatim |
+
+**Vendor naming and the `detail` parameter.** The grading surfaces are labelled
+**Analysis** and **Unit grades** in the UI, and no user-visible string names PFF. That part
+is cosmetic. The substantive part is `detail=summary`, accepted by
+`/teams/{id}/units`, `/teams/{id}/protection`, `/players/{id}/pff` and `/players/{id}`:
+it returns rank, percentile, counted events, snaps and alignment rates, and **omits the
+licensed grade and the raw export row**. `full` remains the default so the Phase-3
+reasoning layer still weighs the real evaluation; the web client sends `summary` on every
+call. `/players/{id}/pff` drops from 126 KB to 4 KB under it, and `/pff/splits` — which
+returns export rows verbatim — is called by no UI surface.
+
+Recorded plainly because it will come up again: de-branding is **not** a licensing
+control. The risk in redistributing proprietary grades is the redistribution, and doing it
+unattributed is generally treated worse rather than better. Reducing granularity is the
+part that lowers exposure.
+
+**The contract the UI inherits.** A 501 is not an error — it is typed separately from
+failure and rendered as a phase gate, so an unbuilt surface says "Phase 1" rather than
+showing a spinner or a plausible number. A null renders as an em dash, never zero,
+because "not reported" and "zero" are different facts. Rank colour comes from exactly one
+function, so a hue means the same thing on every surface. Cross-league comparison warns
+that NCAAF's `epa` column holds CFBD's PPA.
+
+Architecture, the rules the UI holds to, and the fixes made along the way: [FRONTEND.md](FRONTEND.md). Quick start: [apps/web/README.md](apps/web/README.md).
 
 ---
 

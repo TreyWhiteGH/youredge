@@ -7,7 +7,9 @@ from sqlalchemy import text
 from youredge import __version__
 from fastapi import Depends, HTTPException, Request
 
-from youredge.api.routes import ncaaf, pff_drop, players, sgp, teams, tendencies
+from youredge.api.routes import (
+    games, meta, ncaaf, pff_drop, players, sgp, teams, tendencies,
+)
 from youredge.db import get_engine
 
 
@@ -18,15 +20,22 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="YourEdge Engine", version=__version__, lifespan=lifespan)
-# Dev: lets the PFF harvest page POST facet JSON to /pff-drop
+# premium.pff.com: lets the PFF harvest page POST facet JSON to /pff-drop.
+# localhost 5173/4173: the web app in dev and in `vite preview`, which run on their own
+# origin and would otherwise be blocked from every GET on this API.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["https://premium.pff.com"],
+    allow_origins=[
+        "https://premium.pff.com",
+        "http://localhost:5173", "http://127.0.0.1:5173",
+        "http://localhost:4173", "http://127.0.0.1:4173",
+    ],
     allow_methods=["GET", "POST"],
     allow_headers=["content-type"],
 )
 app.include_router(sgp.router, prefix="/api/football")
 app.include_router(pff_drop.router, prefix="/api/football")
+app.include_router(meta.router, prefix="/api/football")
 
 
 @app.middleware("http")
@@ -48,7 +57,7 @@ async def league_guard(request: Request):
     path_league = parts[2] if len(parts) > 2 else None
     if path_league not in ("nfl", "ncaaf"):
         return
-    for key in ("team_id", "player_id"):
+    for key in ("team_id", "player_id", "game_id"):
         value = request.path_params.get(key) or request.query_params.get(key)
         if value and ":" in value and value.split(":", 1)[0] != path_league:
             raise HTTPException(
@@ -64,12 +73,14 @@ _guard = [Depends(league_guard)]
 app.include_router(players.router, prefix="/api/nfl", dependencies=_guard)
 app.include_router(teams.router, prefix="/api/nfl", dependencies=_guard)
 app.include_router(tendencies.router, prefix="/api/nfl", dependencies=_guard)
+app.include_router(games.router, prefix="/api/nfl", dependencies=_guard)
 
 # NCAAF: the shared team cards plus coaching/experience surfaces the NFL has no
 # analog for.
 app.include_router(teams.router, prefix="/api/ncaaf", dependencies=_guard)
 app.include_router(tendencies.router, prefix="/api/ncaaf", dependencies=_guard)
 app.include_router(ncaaf.router, prefix="/api/ncaaf", dependencies=_guard)
+app.include_router(games.router, prefix="/api/ncaaf", dependencies=_guard)
 
 
 @app.get("/api/football/health")

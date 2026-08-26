@@ -9,6 +9,8 @@ GET /players/{player_id}/plays         enriched PBP involving the player
 GET /players/{player_id}/clutch        QB clutch surface (late&close, 2-min, drives)
 """
 
+from typing import Literal
+
 from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import text
 
@@ -61,7 +63,13 @@ async def search_players(q: str = Query(min_length=2), limit: int = 10):
 
 
 @router.get("/players/{player_id}")
-async def player_detail(player_id: str, seasons: list[int] = Query(default=DEFAULT_SEASONS)):
+async def player_detail(
+    player_id: str,
+    seasons: list[int] = Query(default=DEFAULT_SEASONS),
+    detail: Literal["full", "summary"] = Query(
+        default="full",
+        description="summary returns usage and alignment in place of licensed grades"),
+):
     async with get_engine().connect() as conn:
         bio = await _player_or_404(conn, player_id)
         agg = (await conn.execute(
@@ -85,9 +93,13 @@ async def player_detail(player_id: str, seasons: list[int] = Query(default=DEFAU
         )).mappings().all()
         out = {**bio, "seasons": [dict(r) for r in agg]}
 
+        # Same split as /players/{id}/pff: usage and alignment are observations, the
+        # grade is the vendor's evaluation. A summary caller gets the former only.
+        pff_cols = ("facet, season, snaps, slot_rate" if detail == "summary"
+                    else "facet, season, snaps, slot_rate, grade")
         pff = (await conn.execute(
-            text("""
-                SELECT facet, season, snaps, slot_rate, grade
+            text(f"""
+                SELECT {pff_cols}
                 FROM pff_player_stats
                 WHERE player_id = :pid AND week = 0 AND season = ANY(:seasons)
                 ORDER BY season DESC, facet
@@ -170,15 +182,28 @@ async def player_pff(
     facet: str | None = Query(default=None, description="e.g. receiving, coverage, pass_blocking"),
     seasons: list[int] = Query(default=DEFAULT_SEASONS),
     weekly: bool = Query(default=False, description="False = season rows (week 0) only"),
+    detail: Literal["full", "summary"] = Query(
+        default="full",
+        description="summary drops the licensed grade and the raw export row, "
+                    "keeping usage and alignment"),
 ):
     """PFF rows for a player — typed headline numbers plus the complete export
-    row (stats). Weekly rows carry game_id, so PFF context joins play-by-play."""
+    row (stats). Weekly rows carry game_id, so PFF context joins play-by-play.
+
+    `detail=summary` returns snaps, routes and alignment rates only. Those are measured
+    usage — how often a receiver lined up in the slot is a fact about the formation —
+    while `grade` is the vendor's proprietary evaluation and `stats` is their export row
+    verbatim. Surfaces served to end users request the summary; the reasoning layer,
+    which needs to weigh the evaluation itself, requests the default."""
     async with get_engine().connect() as conn:
         await _player_or_404(conn, player_id)
+        columns = ("facet, season, week, game_id, team_id, snaps, slot_rate, wide_rate"
+                   if detail == "summary"
+                   else "facet, season, week, game_id, team_id, snaps, slot_rate, "
+                        "wide_rate, grade, stats")
         rows = (await conn.execute(
             text(f"""
-                SELECT facet, season, week, game_id, team_id, snaps, slot_rate,
-                       wide_rate, grade, stats
+                SELECT {columns}
                 FROM pff_player_stats
                 WHERE player_id = :pid AND season = ANY(:seasons)
                   {"AND facet = :facet" if facet else ""}
@@ -187,7 +212,7 @@ async def player_pff(
             """),
             {"pid": player_id, "seasons": seasons, **({"facet": facet} if facet else {})},
         )).mappings().all()
-    return {"player_id": player_id, "rows": [dict(r) for r in rows]}
+    return {"player_id": player_id, "detail": detail, "rows": [dict(r) for r in rows]}
 
 
 @router.get("/players/{player_id}/college")

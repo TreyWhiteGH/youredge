@@ -180,23 +180,59 @@ async def _absence(team_id: str, player_id: str, seasons: list[int],
     }
 
 
+# The licensed grade is the vendor's product; the league rank we compute from it is
+# ours. `detail=summary` returns the rank and drops the underlying grade, so a surface
+# served to end users never carries the proprietary number over the wire. It is also the
+# more honest projection: these cards are trustworthy at the top-five/bottom-five grain
+# and adjacent ranks are noise, so a grade to one decimal implies precision that is not
+# there. `full` stays the default because the Phase-3 reasoning layer needs the real
+# number to weigh evidence.
+Detail = Literal["full", "summary"]
+
+_GRADE_KEYS = ("grade", "league_avg")
+
+
+def _summarize_unit(unit: dict) -> dict:
+    out = {k: v for k, v in unit.items() if k not in _GRADE_KEYS}
+    rank, of = unit.get("rank"), unit.get("teams_ranked")
+    if rank and of and of > 1:
+        out["percentile"] = round(1 - (rank - 1) / (of - 1), 3)
+        # Above or below the field, without quoting either number.
+        out["vs_league"] = (
+            "above" if (unit.get("grade") or 0) > (unit.get("league_avg") or 0) else "below"
+        )
+    return out
+
+
 @router.get("/teams/{team_id}/units")
-async def unit_grades(team_id: str, season: int = Query(default=2025)):
-    """PFF unit quality (snap-weighted grades + league rank) for pass/run
-    blocking, pass rush, run defense, coverage, receiving, rushing. Pass
-    protection in particular has no free-data equivalent."""
+async def unit_grades(
+    team_id: str,
+    season: int = Query(default=2025),
+    detail: Detail = Query(default="full",
+                           description="summary drops the licensed grade, keeping rank"),
+):
+    """Unit quality (snap-weighted grades + league rank) for pass/run blocking, pass
+    rush, run defense, coverage, receiving, rushing. Pass protection in particular has
+    no free-data equivalent."""
     async with get_engine().connect() as conn:
         units = await team_units(conn, team_id, season)
     if not units:
         raise HTTPException(
             status_code=404,
-            detail=f"no PFF unit data for {team_id} season={season}",
+            detail=f"no unit data for {team_id} season={season}",
         )
-    return {"team_id": team_id, "season": season, "units": units}
+    if detail == "summary":
+        units = {k: _summarize_unit(v) for k, v in units.items()}
+    return {"team_id": team_id, "season": season, "detail": detail, "units": units}
 
 
 @router.get("/teams/{team_id}/protection")
-async def pass_protection(team_id: str, season: int = Query(default=2025)):
+async def pass_protection(
+    team_id: str,
+    season: int = Query(default=2025),
+    detail: Detail = Query(default="full",
+                           description="summary drops per-lineman licensed grades"),
+):
     """Pass protection detail: unit pressure rate allowed plus per-lineman rows.
 
     pressure_rate_allowed is derived (pressures / pass-block snaps), not PFF's
@@ -232,6 +268,12 @@ async def pass_protection(team_id: str, season: int = Query(default=2025)):
     tot_snaps = tot_press = 0.0
     for r in rows:
         d = {k: (float(v) if isinstance(v, (int, float)) else v) for k, v in dict(r).items()}
+        if detail == "summary":
+            # Counted events — snaps, pressures, sacks, hits, hurries — describe what
+            # happened on the field. The grades are the vendor's judgement of it, and
+            # they are the part a summary drops.
+            d.pop("grade", None)
+            d.pop("true_pass_set_grade", None)
         if r["pb_snaps"]:
             d["pressure_rate_allowed"] = round((r["pressures"] or 0) / r["pb_snaps"], 4)
             tot_snaps += r["pb_snaps"]
@@ -239,7 +281,7 @@ async def pass_protection(team_id: str, season: int = Query(default=2025)):
         linemen.append(d)
 
     return {
-        "team_id": team_id, "season": season,
+        "team_id": team_id, "season": season, "detail": detail,
         "unit": {
             "pass_block_snaps": int(tot_snaps),
             "pressures_allowed": int(tot_press),

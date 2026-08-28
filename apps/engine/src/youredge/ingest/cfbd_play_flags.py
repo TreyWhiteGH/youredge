@@ -99,6 +99,7 @@ async def _get(client: httpx.AsyncClient, params: dict):
 _UPDATE = text("""
     UPDATE plays SET
         play_type_raw     = s.raw,
+        play_text         = s.txt,
         scoring           = s.scoring,
         touchdown         = s.touchdown,
         interception      = s.interception,
@@ -112,6 +113,7 @@ _UPDATE = text("""
         SELECT unnest(CAST(:gids AS text[]))    AS game_id,
                unnest(CAST(:pids AS text[]))    AS source_play_id,
                unnest(CAST(:raws AS text[]))    AS raw,
+               unnest(CAST(:txts AS text[]))    AS txt,
                unnest(CAST(:scor AS boolean[])) AS scoring,
                unnest(CAST(:td   AS boolean[])) AS touchdown,
                unnest(CAST(:intc AS boolean[])) AS interception,
@@ -141,8 +143,8 @@ async def backfill_week(season: int, week: int, season_type: str) -> tuple[int, 
         return 0, set()
 
     cols: dict[str, list] = {k: [] for k in (
-        "gids", "pids", "raws", "scor", "td", "intc", "fum", "saf", "sk", "cmp",
-        "drop", "fg",
+        "gids", "pids", "raws", "txts", "scor", "td", "intc", "fum", "saf", "sk",
+        "cmp", "drop", "fg",
     )}
     seen_types: set[str] = set()
     for p in plays:
@@ -152,6 +154,7 @@ async def backfill_week(season: int, week: int, season_type: str) -> tuple[int, 
         cols["gids"].append(f"ncaaf:{p.get('gameId')}")
         cols["pids"].append(str(p.get("id")))
         cols["raws"].append(raw)
+        cols["txts"].append(p.get("playText"))
         cols["scor"].append(bool(p.get("scoring")))
         cols["td"].append(d["touchdown"])
         cols["intc"].append(d["interception"])

@@ -109,3 +109,16 @@ drives:
 # cannot express a scoring drive. See ingest/cfbd_drives.py.
 drives-ncaaf:
 	docker compose run --rm ingest python -m youredge.ingest.cfbd_drives --seasons 2023 2024 2025
+
+# NCAAF play-level player attribution. cfbd_play_players is the feed (SEC/ACC
+# only); playtext_players parses the rest from play descriptions. Run
+# validate_playtext after touching the parser — it is what licenses the write.
+play-players:
+	docker compose run --rm ingest python -m youredge.ingest.cfbd_play_players --seasons 2023 2024 2025
+	docker compose run --rm ingest python -m youredge.ingest.playtext_players
+
+validate-playtext:
+	docker compose run --rm ingest python -m youredge.ingest.validate_playtext
+
+weather-ncaaf:
+	docker compose run --rm ingest python -m youredge.ingest.cfbd_weather --seasons 2023 2024 2025

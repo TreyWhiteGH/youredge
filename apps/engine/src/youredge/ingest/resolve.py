@@ -33,7 +33,11 @@ def normalize_name(name: str) -> str:
     """
     s = unicodedata.normalize("NFD", name)
     s = "".join(c for c in s if not unicodedata.combining(c))
-    s = re.sub(r"[''ʻ`]", "", s.lower())  # Hawai'i -> hawaii, not 'hawai i'
+    # Every apostrophe form, ASCII and typographic alike: Hawai'i -> hawaii, not
+    # 'hawai i'. U+2019 was missing, so any feed using curly quotes silently
+    # failed to match — "Jo’Quavious Marks" normalised to 'jo quavious marks'
+    # and resolved to nobody.
+    s = re.sub(r"['‘’ʻʼ`´]", "", s.lower())
     s = re.sub(r"[^a-z0-9]+", " ", s).strip()
     tokens = [("st" if t == "state" else t) for t in s.split() if t != "the"]
     merged: list[str] = []

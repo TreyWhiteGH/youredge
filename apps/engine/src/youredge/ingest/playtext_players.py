@@ -3,20 +3,27 @@
 CFBD's /plays/stats covers SEC and ACC — 790 of 2,761 games. This fills the rest
 from `plays.play_text`, resolved against the roster crosswalk.
 
-Only three roles are written, and the cut is not arbitrary. Scored against a
-fixed 60,000 plays where the feed and the text both exist:
+All five roles are written now, and the reason the defensive two were once
+excluded is worth keeping. Scored against a fixed 60,000 plays where the feed and
+the text both exist:
 
-    rusher      99.9% precision   98.3% recall
-    receiver    99.6%             98.3%
-    passer      99.2%             99.0%
-    sacker      32.3%             96.4%   <- not written
-    interceptor 33.7%             56.7%   <- not written
+    rusher      100.0% precision   98.7% recall
+    receiver     99.8%             99.0%
+    passer       99.9%             99.6%
+    sacker       99.8%             96.4%
+    interceptor 100.0%             56.7%
 
-Sacks and interceptions stay out. The text names every defender on a shared sack
-without saying who is credited, and the defensive-side team assignment does not
-line up with the feed's — one in three being right is not something a model
-should read as a defensive rate. Rerun `validate_playtext.py` after any change to
-the patterns; those thresholds are the reason this is allowed to write at all.
+An earlier version of the harness put sacker at 32% and interceptor at 34%, and
+that was the harness being wrong rather than the parser. The feed records a
+quarterback's 'Sack Taken' on 3,033 of 3,160 sacks but names the defender on only
+2,295, so a correctly parsed sacker on one of the other 738 plays was scored as a
+false positive. Silence is not disagreement, and those plays are now excluded from
+the score instead of counted against it.
+
+Interceptor recall stays low because the text often does not name who caught it
+('pass intercepted, touchback'). That is incompleteness, not error — an
+interception attributed here is right essentially always, there are simply fewer
+of them than really happened.
 
 End-to-end against facts outside the system: 2024 rushing leaders come out as
 Jeanty 369/2589 (actual 374/2601), Kaleb Johnson 235/1502 (240/1537), Tahj Brooks
@@ -35,11 +42,17 @@ import logging
 from sqlalchemy import text
 
 from youredge.db import get_engine
-from youredge.ingest.playtext import PASSER, RECEIVER, RUSHER, load_roster, parse
+from youredge.ingest.playtext import (
+    INTERCEPTOR, PASSER, RECEIVER, RUSHER, SACKER, load_roster, parse,
+)
 
 log = logging.getLogger(__name__)
 
-WRITTEN_ROLES = {RUSHER, RECEIVER, PASSER}
+WRITTEN_ROLES = {RUSHER, RECEIVER, PASSER, SACKER, INTERCEPTOR}
+# Sacks and interceptions belong to the defence; everything else to the team
+# with the ball. Resolving a defender against the offensive roster would find
+# either nobody or, worse, somebody.
+DEFENSIVE_ROLES = {SACKER, INTERCEPTOR}
 
 # The feed's own stat vocabulary, so a parsed row reads the same as a fed one.
 # What the passer and receiver are credited with depends on how the pass ended,
@@ -69,10 +82,19 @@ RUSHER_STAT = {
     "Fumble Recovery (Own)": "Rush",
     "Fumble Recovery (Opponent)": "Rush",
 }
+SACKER_STAT = {"Sack": "Sack"}
+INTERCEPTOR_STAT = {
+    "Interception": "Interception",
+    "Pass Interception Return": "Interception",
+    "Interception Return Touchdown": "Interception",
+}
+# Defensive rows are counts, not yardage: the feed writes stat = 1 for a sack,
+# and yards_gained on a sack is the quarterback's loss, which belongs to him.
+COUNT_ROLES = {SACKER, INTERCEPTOR}
 
 _SOURCE = text("""
     SELECT p.game_id, p.source_play_id, p.play_text, p.play_type_raw,
-           p.posteam_id, p.yards_gained
+           p.posteam_id, p.defteam_id, p.yards_gained
     FROM plays p
     JOIN games g ON g.game_id = p.game_id
     WHERE g.league = 'ncaaf'
@@ -115,6 +137,10 @@ def _stat_type(role: str, play_type_raw: str | None) -> str | None:
         return PASSER_STAT.get(pt)
     if role == RECEIVER:
         return RECEIVER_STAT.get(pt)
+    if role == SACKER:
+        return SACKER_STAT.get(pt)
+    if role == INTERCEPTOR:
+        return INTERCEPTOR_STAT.get(pt)
     return None
 
 
@@ -147,7 +173,11 @@ async def run(batch: int) -> None:
             if not stat_type:
                 skipped += 1
                 continue
-            pid = roster.resolve(r["posteam_id"], name)
+            team_id = r["defteam_id"] if role in DEFENSIVE_ROLES else r["posteam_id"]
+            if team_id is None:
+                unresolved += 1
+                continue
+            pid = roster.resolve(team_id, name)
             if pid is None:
                 unresolved += 1
                 continue
@@ -155,10 +185,11 @@ async def run(batch: int) -> None:
             cols["pids"].append(r["source_play_id"])
             cols["plids"].append(pid)
             cols["names"].append(name)
-            cols["teams"].append(r["posteam_id"])
+            cols["teams"].append(team_id)
             cols["stats"].append(stat_type)
             cols["vals"].append(
-                float(r["yards_gained"]) if r["yards_gained"] is not None else None
+                1.0 if role in COUNT_ROLES
+                else (float(r["yards_gained"]) if r["yards_gained"] is not None else None)
             )
             if len(cols["gids"]) >= batch:
                 written += await flush()

@@ -86,6 +86,7 @@ async def run(limit: int) -> None:
     fp = collections.Counter()
     fn = collections.Counter()
     unresolved = collections.Counter()
+    unscored = collections.Counter()
     examples: list[str] = []
 
     for p in plays:
@@ -108,6 +109,15 @@ async def run(limit: int) -> None:
         for role, stats in ROLE_STATS.items():
             want = {player for player, stat in actual if stat in stats}
             got = {player for player, r in predicted if r == role}
+            if not want:
+                # The feed says nothing about this role on this play, and silence
+                # is not disagreement. It records the quarterback's 'Sack Taken'
+                # on 3,033 of 3,160 sacks but names the defender on only 2,295 —
+                # scoring those 738 as errors measured the feed's gaps, not the
+                # parser's, and put sacker precision at 32% when the parse was
+                # right. Counted separately instead.
+                unscored[role] += len(got)
+                continue
             tp[role] += len(want & got)
             fp[role] += len(got - want)
             fn[role] += len(want - got)
@@ -123,6 +133,11 @@ async def run(limit: int) -> None:
     T, F, N = sum(tp.values()), sum(fp.values()), sum(fn.values())
     log.info("\n%-12s %8d %8d %8d   %8.1f%% %8.1f%%", "OVERALL", T, F, N,
              100 * T / (T + F) if T + F else 0, 100 * T / (T + N) if T + N else 0)
+
+    if unscored:
+        log.info("\npredictions on plays where the feed names nobody for that role")
+        log.info("(not scored either way — the feed is silent, not contradicting): %s",
+                 dict(unscored))
 
     if unresolved:
         log.info("\nnames parsed but not resolved to a roster: %s", dict(unresolved))

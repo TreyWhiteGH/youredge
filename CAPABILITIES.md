@@ -280,10 +280,22 @@ Architecture, the rules the UI holds to, and the fixes made along the way: [FRON
   The remaining games are filled by parsing `plays.play_text`, written with
   `source = 'playtext'` so inference is always separable from feed. Total coverage is
   **2,759 of 2,761 games (99.9%)**. The parser is scored against the games where both
-  exist before it writes — a fixed 60,000 plays: rusher 99.9% precision / 98.3% recall,
-  receiver 99.6% / 98.3%, passer 99.2% / 99.0%. **Sacks and interceptions are
-  deliberately not written** (32% and 34% precision). Re-run `make validate-playtext`
-  after any change to the patterns.
+  exist before it writes — a fixed 60,000 plays: rusher 100.0% precision / 98.7%
+  recall, receiver 99.8% / 99.0%, passer 99.9% / 99.6%, sacker 99.8% / 96.4%,
+  interceptor 100.0% / 56.7%. Re-run `make validate-playtext` after any change.
+
+  **Recall, not precision, is the limit here.** Sacks run roughly a quarter under the
+  real totals and interceptions further, because the text frequently declines to name
+  the defender ("pass intercepted, touchback"). A defensive event attributed here is
+  almost always right; there are simply fewer of them than actually happened, so these
+  columns support "did this player do it" far better than "how often".
+
+  A caution about measuring this. An earlier harness scored sacker at 32% and
+  interceptor at 34%, which was the harness being wrong rather than the parser: the
+  feed records a quarterback's `Sack Taken` on 3,033 of 3,160 sacks but names the
+  defender on only 2,295, so a correctly parsed sacker on one of the other 738 plays
+  counted as a false positive. Feed silence is not disagreement, and a validation set
+  drawn only from where labels exist will keep producing that class of error.
 
   Play-text formats differ by conference, and that is a trap worth knowing about: the
   first version of this parser was written and validated entirely on SEC/ACC text, so

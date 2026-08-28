@@ -1,13 +1,29 @@
 """SGP endpoints — the routes apps/web/src/sgp/lib/api.js already calls.
 
-Phase 0: honest stubs returning 501 with a machine-readable phase marker,
-so the UI can fall back to mocks and we can light these up one at a time.
+Lit one at a time as the layer beneath each one becomes real. Critique is live:
+it runs on counted history — the empirical leg surface plus de-vigged market
+prices — and needs no simulator. The other three still return 501 with the phase
+they are waiting on, because generating or pricing a parlay needs a joint
+distribution that does not exist yet.
+
+Critique deliberately does not return a combined price. It reports per-leg edge
+against the sharpest book, which is a real number today, and pairwise redundancy
+and script conflict from history, which are real findings today. Multiplying
+historical base rates into an expected value would look like a price and would
+not be one.
 """
 
-from fastapi import APIRouter
+import logging
+
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
+from youredge.db import get_engine
+from youredge.legs.critique import critique as run_critique
+
+log = logging.getLogger(__name__)
 router = APIRouter(tags=["sgp"])
 
 
@@ -73,7 +89,35 @@ async def test_hypothesis(req: HypothesisRequest):
 
 @router.post("/sgp/critique")
 async def critique(req: CritiqueRequest):
-    return _not_implemented("critique")
+    """Diagnose a slip: per-leg fair value, redundancy, script conflict.
+
+    Live. Runs on counted outcomes and de-vigged prices; no model involved, and
+    no combined price returned.
+    """
+    if not req.legs:
+        raise HTTPException(status_code=400, detail="no legs supplied")
+
+    async with get_engine().connect() as conn:
+        known = await conn.execute(
+            text("SELECT 1 FROM games WHERE game_id = :gid"), {"gid": req.game_id})
+        if known.first() is None:
+            raise HTTPException(status_code=404, detail=f"unknown game {req.game_id}")
+
+        # The surface is per-league and built from finished games. Without it
+        # there is nothing to critique against, and saying so beats returning an
+        # empty analysis that reads like "no problems found".
+        surface = await conn.execute(
+            text("SELECT 1 FROM leg_pair_stats WHERE league = :lg LIMIT 1"),
+            {"lg": req.league})
+        if surface.first() is None:
+            return JSONResponse(status_code=501, content={
+                "error": "no empirical surface for this league",
+                "phase": "layer-b",
+                "detail": "Run make layer-b to build leg_pair_stats.",
+            })
+
+        return await run_critique(
+            conn, req.game_id, req.league, req.sportsbook, req.legs, req.quoted_odds)
 
 
 @router.post("/sgp/save")

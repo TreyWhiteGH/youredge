@@ -2,9 +2,9 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "web",
+      "name": "web-worktree",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "apps/web", "run", "dev"],
+      "runtimeArgs": ["run", "dev"],
       "port": 5173
     }
   ]

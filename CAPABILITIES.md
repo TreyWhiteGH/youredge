@@ -275,9 +275,20 @@ Architecture, the rules the UI holds to, and the fixes made along the way: [FRON
   for college). **Upstream coverage is SEC and ACC only — 790 of 2,761 games, 28.6%.**
   Every other FBS conference returns zero rows, consistently across 2023-25, and ESPN's
   own APIs carry no player participants on college plays either, so this is an upstream
-  reality rather than a CFBD limitation. Absence of a player on a play is therefore never
-  evidence he was uninvolved. `Target` is also under-recorded relative to `Reception`, so
-  target share from this table alone undercounts.
+  reality rather than a CFBD limitation.
+
+  The remaining games are filled by parsing `plays.play_text`, written with
+  `source = 'playtext'` so inference is always separable from feed. Total coverage is
+  **2,492 of 2,761 games (90.3%)**. The parser is scored against the games where both
+  exist before it is allowed to write — 60,000 plays, rusher 99.3% precision / 96.2%
+  recall, receiver 99.4% / 96.4%, passer 97.6% / 97.9%. **Sacks and interceptions are
+  deliberately not written** (79.9% and 80.2% precision): a shared sack names two
+  defenders without saying who is credited. Re-run `make validate-playtext` after any
+  change to the patterns.
+
+  Two caveats survive. `Target` is under-recorded in the feed, and CFBD names the
+  intended receiver on only ~9% of incompletions, so target share undercounts from
+  either source. And absence of a player on a play is never evidence he was uninvolved.
 - **Scrambles count as runs** in pass-rate tendencies (nflverse convention); `qb_dropback` metrics don't have this issue.
 - **PFF weeks are PFF's** — postseason numbering is remapped on ingest; don't compare raw week integers across sources.
 - **Split facets have no top-level grade** by design; their data lives in prefixed columns via `/pff/splits`.

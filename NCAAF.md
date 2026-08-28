@@ -144,7 +144,9 @@ per-season transaction boundary means you simply re-run the failed seasons.
 - **No learned weighting yet.** Whether coaching or continuity dominates is contextual;
   that gets fit from data rather than asserted. **No models exist yet — this is all data
   and pipeline.**
-- **No weather.** CFBD's weather endpoint is paywalled ($10/mo tier). Venue elevation,
+- **Weather: loaded.** CFBD's weather endpoint is reachable on the Patreon tier and
+  2,712 of 2,762 games (2023-25) now carry temp, wind, precipitation, snowfall, humidity
+  and condition. Venue elevation,
   dome and surface are loaded; live conditions are not.
 - **No injury data, and none is obtainable.** College has no mandatory injury report and
   CFBD publishes no snap counts, so unlike the NFL there isn't even an after-the-fact
@@ -165,7 +167,7 @@ inverse: the context reaches back to 2016 and now the labels do too.
 | Player identity + production | 2023–2025 |
 | Venue / elevation / neutral site | loaded |
 | Prop market history | **not loaded** (costs credits) |
-| Weather | **paywalled** |
+| Weather | loaded, 2,712 games (2023-25) |
 | Injuries | **unobtainable** |
 
 ## College players who reach the NFL

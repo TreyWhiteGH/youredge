@@ -1,3 +1,5 @@
+name: youredge
+
 services:
   db:
     image: postgres:16-alpine
@@ -66,6 +68,33 @@ services:
       db:
         condition: service_healthy
     profiles: ["ingest"]
+
+  # Odds poller as a supervised service, not a `run --rm` shell job.
+  #
+  # The market surface it collects — props, alternates, period lines — only
+  # accrues in real time and cannot be bought back later at this granularity, so
+  # a poller that dies quietly is the most expensive failure in the system. The
+  # first attempt ran under `compose run --rm`, exited for reasons that were
+  # deleted along with the container, and lost hours before anyone noticed.
+  #
+  # restart: unless-stopped brings it back; keeping it off `--rm` keeps the logs.
+  poller:
+    # Reuses the engine image rather than building its own: same code, same bind
+    # mount, different entrypoint. Nothing to rebuild when the poller changes.
+    image: youredge-engine
+    container_name: youredge-poller
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-youredge}:${POSTGRES_PASSWORD:-youredge_dev}@db:5432/${POSTGRES_DB:-youredge}
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./apps/engine/src:/app/src
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    command: ["python", "-m", "youredge.ingest.odds_poller"]
+    profiles: ["poller"]
 
   # Legacy Flask backend (basketball-era endpoints). Opt-in:
   #   docker compose --profile legacy up backend

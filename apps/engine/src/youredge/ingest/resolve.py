@@ -128,6 +128,42 @@ async def resolve_event(
     return game[0]
 
 
+async def resolve_nfl_player(conn: AsyncConnection, name: str) -> str | None:
+    """Canonical NFL player_id from a free-text name, or None.
+
+    Prop feeds name players as strings ("Sam Darnold"); nflverse_alias is keyed by
+    the same normalized form. Unlike college there is no team scoping needed —
+    NFL rosters are small enough that the normalized name is near-unique — but an
+    unresolved name is still returned as None rather than guessed. Callers keep
+    the raw string on markets.player_name so the price survives the miss.
+    """
+    norm = normalize_name(name)
+    if not norm:
+        return None
+    # Books drop generational suffixes that nflverse keeps ("Deebo Samuel" vs
+    # "Deebo Samuel Sr."), so a miss on the exact form retries against aliases
+    # that differ only by a trailing suffix. Anchored, and only accepted when it
+    # picks out exactly one player — two Kenneth Walkers would resolve to neither.
+    #
+    # DISTINCT on the canonical id, not on the alias: nflverse carries both
+    # "marvin harrison" and "marvin harrison jr" for the same person, and counting
+    # rows would read one player as an ambiguous two and refuse to resolve him.
+    # The league filter matters too — nflverse_alias holds the odd ncaaf: id, and
+    # an NFL prop must never resolve to a college player.
+    rows = (await conn.execute(
+        text("""
+            SELECT DISTINCT canonical_id FROM entity_xwalk
+            WHERE entity_type = 'player' AND source = 'nflverse_alias'
+              AND canonical_id LIKE 'nfl:%'
+              AND (source_id = :sid
+                   OR source_id ~ ('^' || :sid || ' (jr|sr|ii|iii|iv|v)$'))
+            LIMIT 2
+        """),
+        {"sid": norm},
+    )).fetchall()
+    return rows[0][0] if len(rows) == 1 else None
+
+
 async def resolve_ncaaf_player(
     conn: AsyncConnection, name: str, team_id: str | None = None
 ) -> str | None:

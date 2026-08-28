@@ -22,6 +22,11 @@ _COUNTS = text("""
       (SELECT count(*) FROM games)                                             AS games,
       (SELECT count(*) FROM plays WHERE game_id LIKE 'nfl:%')                  AS nfl_plays,
       (SELECT count(*) FROM plays WHERE game_id LIKE 'ncaaf:%')                AS ncaaf_plays,
+      (SELECT count(*) FROM drives WHERE game_id LIKE 'nfl:%')                 AS nfl_drives,
+      (SELECT count(*) FROM drives WHERE game_id LIKE 'ncaaf:%')               AS ncaaf_drives,
+      (SELECT count(*) FROM play_players)                                      AS ncaaf_play_players,
+      (SELECT count(DISTINCT game_id) FROM play_players)                       AS ncaaf_player_games,
+      (SELECT count(*) FROM games WHERE weather_condition IS NOT NULL)          AS games_with_weather,
       (SELECT count(*) FROM player_game_stats)                                 AS player_game_stats,
       (SELECT count(*) FROM pff_player_stats)                                  AS pff_rows,
       (SELECT count(DISTINCT facet) FROM pff_player_stats)                     AS pff_facets,
@@ -57,6 +62,17 @@ CAPABILITIES = [
      "detail": "Portable career residual, returning production, portal churn, SP+."},
     {"id": "odds", "label": "Market prices, de-vigged", "available": True,
      "detail": "Spreads, totals, moneylines with fair probability and line movement."},
+    {"id": "ncaaf_play_players", "label": "NCAAF play-level player attribution",
+     "available": True,
+     "detail": "Per-play player events from CFBD /plays/stats, resolved to canonical "
+               "ids. Upstream coverage is SEC and ACC only — about 29% of FBS games — "
+               "so absence of a player on a play is not evidence he was not involved."},
+    {"id": "weather", "label": "Game weather", "available": True,
+     "detail": "NCAAF temp/wind/precipitation/condition from CFBD. NFL is temp and "
+               "wind only, outdoor games. NULL means unavailable, never calm."},
+    {"id": "drives", "label": "Drive outcomes, pace and fatigue", "available": True,
+     "detail": "Possession-level outcomes by starting field position, both leagues. "
+               "The surfaces a drive-level simulator is fit from."},
     {"id": "sim", "label": "Drive-level Monte Carlo simulator", "available": False,
      "detail": "Phase 1. Until it calibrates against closing lines there is no model "
                "probability, so nothing here quotes an edge."},

@@ -1,9 +1,9 @@
 .PHONY: up down logs psql redis-cli health ingest-nfl reset-db migrate
 
-# Apply migrations added after the volume was created (001 ran via initdb)
+# Apply every migration the database has not seen yet (initdb only runs once,
+# so an existing volume drifts behind the repo). Idempotent; safe to re-run.
 migrate:
-	docker compose exec db psql -U youredge -d youredge -f /docker-entrypoint-initdb.d/002_markets_null_unique.sql
-	docker compose exec db psql -U youredge -d youredge -f /docker-entrypoint-initdb.d/003_snapshot_nullable_price.sql
+	./db/migrate.sh
 
 up:
 	docker compose up -d db redis engine
@@ -41,8 +41,30 @@ ingest-snaps:
 ingest-players:
 	docker compose run --rm ingest python -m youredge.ingest.players
 
+# One sweep: featured markets for every game, plus the per-event tier (props,
+# period lines, alternates, team totals) for games whose tier says they are stale.
 poll-odds:
 	docker compose run --rm ingest python -m youredge.ingest.odds_poller --once
+
+# Featured markets only — no per-event spend. Use when checking the pipeline.
+poll-odds-core:
+	docker compose run --rm ingest python -m youredge.ingest.odds_poller --once --core-only
+
+# Detached polling loop (interval: ODDS_POLL_INTERVAL_SECONDS).
+poll-odds-loop:
+	docker compose --profile poller up -d poller
+
+poll-odds-stop:
+	docker compose --profile poller stop poller
+
+poll-odds-logs:
+	docker compose --profile poller logs -f poller
+
+# NFL play-by-play back to 2016, aligning the NFL window with NCAAF's. 2016 is
+# the floor because NGS and air yards start there, so every enriched column the
+# 2023+ rows carry exists across the whole range.
+backfill-nfl:
+	docker compose run --rm ingest python -m youredge.ingest.nfl_pbp --seasons 2016 2017 2018 2019 2020 2021 2022
 
 devig:
 	docker compose run --rm ingest python -m youredge.pricing.devig
@@ -77,3 +99,13 @@ features-ncaaf:
 
 features-nfl:
 	docker compose run --rm ingest python -m youredge.modeling.features --league nfl --seasons 2023 2024 2025
+
+# Derive drives from plays (the simulator, script labelling and the leg ledger
+# all read this). NFL only; NCAAF is refused until college scoring is derivable.
+drives:
+	docker compose run --rm ingest python -m youredge.modeling.drives --league nfl
+
+# NCAAF drives come from CFBD /drives (one call per season) — college plays
+# cannot express a scoring drive. See ingest/cfbd_drives.py.
+drives-ncaaf:
+	docker compose run --rm ingest python -m youredge.ingest.cfbd_drives --seasons 2023 2024 2025

@@ -1,31 +1,103 @@
 """Odds snapshot poller — The Odds API (the-odds-api.com).
 
 Snapshots current odds for tracked games into markets/odds_snapshots.
-Pregame cadence: every 30 min (config: ODDS_POLL_INTERVAL_SECONDS).
+
+Two endpoints, because the API splits its catalogue:
+
+  * **Featured markets** (h2h/spreads/totals) come from the per-sport bulk
+    endpoint. Cost is markets x regions per call, independent of how many games
+    come back, so this is cheap and runs for every tracked game.
+  * **Everything else** — period lines, alternates, team totals, player props —
+    is only available per event. Cost is markets x regions *per event*, so this
+    tier is scheduled against time-to-kickoff instead of run every poll.
+
+The derivative tier is the whole reason this file changed: without props, period
+lines and alternates there is no market surface for an SGP claim to be priced
+against. That data only accrues in real time — it cannot be bought back later at
+this granularity — so the poll runs even when nothing downstream consumes it yet.
 
 Usage:
     docker compose run --rm ingest python -m youredge.ingest.odds_poller --once
-    docker compose run --rm ingest python -m youredge.ingest.odds_poller   # loop
+    docker compose run --rm ingest python -m youredge.ingest.odds_poller          # loop
+    docker compose run --rm ingest python -m youredge.ingest.odds_poller --core-only
 """
 
 import argparse
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from sqlalchemy import text
 
 from youredge.config import get_settings
 from youredge.db import get_engine
-from youredge.ingest.resolve import resolve_event
+from youredge.ingest.resolve import resolve_event, resolve_nfl_player
 from youredge.pricing.devig import devig_snapshots
 
 log = logging.getLogger(__name__)
 BASE = "https://api.the-odds-api.com/v4"
 
 SPORT_KEYS = {"nfl": "americanfootball_nfl", "ncaaf": "americanfootball_ncaaf"}
-CORE_MARKETS = "h2h,spreads,totals"
+
+# Bulk endpoint. Charged markets x regions per call, not per event.
+CORE_MARKETS = ("h2h", "spreads", "totals")
+
+# Per-event endpoint. Charged markets x regions per *event*, hence the schedule
+# below. Every key here was verified against a live event before being wired in.
+PERIOD_MARKETS = (
+    "h2h_h1", "spreads_h1", "totals_h1",
+    "spreads_q1", "totals_q1",
+    "team_totals",
+)
+ALT_MARKETS = ("alternate_spreads", "alternate_totals")
+PROP_MARKETS = (
+    "player_pass_yds", "player_rush_yds", "player_reception_yds",
+    "player_receptions", "player_pass_tds", "player_anytime_td",
+)
+DERIVATIVE_MARKETS = PERIOD_MARKETS + ALT_MARKETS + PROP_MARKETS
+
+# Leagues that get the per-event tier. NCAAF is excluded on cost, not principle:
+# ~130 games a week against the NFL's 16 would be an order of magnitude more
+# credits, and college props are structurally blocked anyway (CFBD play-by-play
+# carries no player ids). Revisit for period lines once the NFL burn is measured.
+DERIVATIVE_LEAGUES = ("nfl",)
+
+
+# Books post props well before the week of the game — Week 1 props were quoted a
+# fortnight out — so the horizon is generous. What bounds the spend is not the
+# horizon but MAX_FAR_EVENTS below: beyond 48 hours only the nearest slate is
+# swept, so a distant week entering the horizon costs nothing until it is next.
+DERIVATIVE_HORIZON_HOURS = 24 * 21
+MAX_FAR_EVENTS = 16
+
+# Measured, not estimated: one per-event sweep of DERIVATIVE_MARKETS costs 14
+# credits (one per market, one region). Books are free — credits scale with
+# markets x regions, not with how many bookmakers are asked for — which is why
+# odds_bookmakers stays wide while the market list is what gets rationed.
+CREDITS_PER_EVENT_SWEEP = len(DERIVATIVE_MARKETS)
+
+
+def derivative_interval(hours_to_kickoff: float) -> timedelta | None:
+    """How stale a game's derivative markets may get before we re-poll it.
+
+    Tightens as kickoff approaches, because that is when the lines move and the
+    books post depth. None means "out of range" — don't spend on it.
+
+    The final tier is deliberately narrow. Polling every 30 minutes for the last
+    three hours would cost six sweeps a game to buy little more than one: what
+    that window is really for is catching the closing line, and one sweep inside
+    the last hour does that at a sixth of the price.
+    """
+    if hours_to_kickoff < 0:
+        return None                      # kicked off; live pricing is Phase 5
+    if hours_to_kickoff <= 1:
+        return timedelta(minutes=30)     # closing snapshot
+    if hours_to_kickoff <= 48:
+        return timedelta(hours=8)
+    if hours_to_kickoff <= DERIVATIVE_HORIZON_HOURS:
+        return timedelta(hours=24)
+    return None
 
 
 def american_to_implied(price: int) -> float:
@@ -34,89 +106,262 @@ def american_to_implied(price: int) -> float:
     return 100 / (price + 100)
 
 
-async def poll_once(league: str) -> int:
+_UPSERT_MARKET = text("""
+    INSERT INTO markets (game_id, bookmaker, market_key, player_id, player_name, side_team_id)
+    VALUES (:gid, :bm, :mk, :pid, :pname, :side)
+    ON CONFLICT (game_id, bookmaker, market_key, player_name) DO UPDATE
+      SET side_team_id = COALESCE(EXCLUDED.side_team_id, markets.side_team_id),
+          -- Let a later, better crosswalk fill an id in place; never let a miss
+          -- clear one that already resolved.
+          player_id    = COALESCE(EXCLUDED.player_id, markets.player_id)
+    RETURNING market_id
+""")
+
+_INSERT_SNAPSHOT = text("""
+    INSERT INTO odds_snapshots
+        (market_id, outcome, line, price_american, implied_prob, is_closing)
+    VALUES (:mid, :outcome, :line, :price, :prob, :closing)
+""")
+
+
+_DEFENSE_SUFFIXES = (" D/ST", " Defense", " DST")
+
+
+def _defense_team(subject: str | None) -> str | None:
+    """Team name behind a defense/special-teams prop subject, if that's what it is."""
+    if not subject:
+        return None
+    for suffix in _DEFENSE_SUFFIXES:
+        if subject.endswith(suffix):
+            return subject[: -len(suffix)].strip()
+    return None
+
+
+async def _store_market(conn, gid, book, mkt, *, league, closing) -> int:
+    """Write one book's quote for one market. Returns snapshot rows written.
+
+    Props and team totals carry the subject in each outcome's `description`
+    ("Sam Darnold", "Seattle Seahawks") rather than on the market, so outcomes
+    are grouped by it and each subject becomes its own market row.
+    """
+    groups: dict[str | None, list[dict]] = {}
+    for oc in mkt.get("outcomes", []):
+        groups.setdefault(oc.get("description"), []).append(oc)
+
+    is_prop = mkt["key"].startswith("player_")
+    rows = 0
+    for subject, outcomes in groups.items():
+        player_id = None
+        side_team_id = None
+        # Anytime-TD boards list team defenses among the players ("Seattle
+        # Seahawks D/ST"). They are a team scoring, not a person, so they resolve
+        # to side_team_id — chasing them through the player crosswalk would only
+        # ever miss.
+        team_subject = subject if (subject and not is_prop) else _defense_team(subject)
+        if team_subject:
+            side_team_id = (await conn.execute(
+                text("SELECT team_id FROM teams WHERE league = :lg AND name = :n"),
+                {"lg": league, "n": team_subject},
+            )).scalar()
+        elif subject and is_prop and league == "nfl":
+            player_id = await resolve_nfl_player(conn, subject)
+
+        market_id = (await conn.execute(_UPSERT_MARKET, {
+            "gid": gid, "bm": book, "mk": mkt["key"],
+            "pid": player_id,
+            # Keep the raw string even when resolved, so market identity stays
+            # stable if the crosswalk later changes its mind about a name.
+            "pname": subject,
+            "side": side_team_id,
+        })).scalar_one()
+
+        for oc in outcomes:
+            if oc.get("price") is None:
+                continue
+            price = int(oc["price"])
+            await conn.execute(_INSERT_SNAPSHOT, {
+                "mid": market_id,
+                "outcome": oc["name"],
+                "line": oc.get("point"),
+                "price": price,
+                "prob": american_to_implied(price),
+                "closing": closing,
+            })
+            rows += 1
+    return rows
+
+
+async def _store_event(conn, league, ev, *, closing=False) -> tuple[int, bool]:
+    """Resolve an event to a canonical game and store every market on it."""
+    kickoff = datetime.fromisoformat(ev["commence_time"].replace("Z", "+00:00"))
+    gid = await resolve_event(
+        conn, league, ev["id"], ev["home_team"], ev["away_team"], kickoff
+    )
+    resolved = gid is not None
+    if not gid:
+        # Fallback stub keeps snapshots flowing; re-resolves once schedules land.
+        gid = f"{league}:oddsapi:{ev['id']}"
+        season = kickoff.year if kickoff.month >= 6 else kickoff.year - 1
+        await conn.execute(
+            text("""
+                INSERT INTO games (game_id, league, season, kickoff, status)
+                VALUES (:gid, :league, :season, :kickoff, 'scheduled')
+                ON CONFLICT (game_id) DO NOTHING
+            """),
+            {"gid": gid, "league": league, "season": season, "kickoff": kickoff},
+        )
+
+    rows = 0
+    for bm in ev.get("bookmakers", []):
+        for mkt in bm.get("markets", []):
+            rows += await _store_market(
+                conn, gid, bm["key"], mkt, league=league, closing=closing
+            )
+    return rows, resolved
+
+
+async def poll_core(client, league: str) -> tuple[list[dict], int]:
+    """Featured markets for every tracked game. One call, markets x regions credits."""
+    settings = get_settings()
+    r = await client.get(
+        f"{BASE}/sports/{SPORT_KEYS[league]}/odds",
+        params={
+            "apiKey": settings.odds_api_key,
+            "regions": "us",
+            "markets": ",".join(CORE_MARKETS),
+            "bookmakers": settings.odds_bookmakers,
+            "oddsFormat": "american",
+        },
+    )
+    r.raise_for_status()
+    return r.json(), int(r.headers.get("x-requests-last", 0))
+
+
+async def _due_for_derivatives(conn, gid: str, kickoff: datetime) -> bool:
+    """Has this game's derivative surface gone stale for its tier?"""
+    hours = (kickoff - datetime.now(timezone.utc)).total_seconds() / 3600
+    interval = derivative_interval(hours)
+    if interval is None:
+        return False
+    last = (await conn.execute(
+        text("""
+            SELECT max(s.captured_at)
+            FROM markets m JOIN odds_snapshots s USING (market_id)
+            WHERE m.game_id = :gid AND m.market_key = ANY(:keys)
+        """),
+        {"gid": gid, "keys": list(DERIVATIVE_MARKETS)},
+    )).scalar()
+    return last is None or (datetime.now(timezone.utc) - last) >= interval
+
+
+async def poll_derivatives(client, conn, league: str, events: list[dict]) -> tuple[int, int]:
+    """Per-event props, period lines, alternates and team totals.
+
+    Charged per event, so each game is polled only when its tier says it has gone
+    stale. Returns (snapshot rows, credits spent).
+    """
+    settings = get_settings()
+
+    # Decide who is due before spending anything, so the far-slate cap applies to
+    # the games that actually need a poll rather than to whatever came first in
+    # the feed. Near games (inside 48h) are never capped — that window is where
+    # the lines move and where the closing snapshot has to be caught.
+    now = datetime.now(timezone.utc)
+    near: list[tuple[str, dict]] = []
+    far: list[tuple[float, str, dict]] = []
+    for ev in events:
+        kickoff = datetime.fromisoformat(ev["commence_time"].replace("Z", "+00:00"))
+        hours = (kickoff - now).total_seconds() / 3600
+        if derivative_interval(hours) is None:
+            continue
+        gid = await resolve_event(
+            conn, league, ev["id"], ev["home_team"], ev["away_team"], kickoff
+        ) or f"{league}:oddsapi:{ev['id']}"
+        if not await _due_for_derivatives(conn, gid, kickoff):
+            continue
+        (near.append((gid, ev)) if hours <= 48 else far.append((hours, gid, ev)))
+
+    far.sort(key=lambda t: t[0])
+    due = near + [(gid, ev) for _, gid, ev in far[:MAX_FAR_EVENTS]]
+    if far[MAX_FAR_EVENTS:]:
+        log.info("%s: deferring %d far events past the sweep cap",
+                 league, len(far) - MAX_FAR_EVENTS)
+
+    rows = credits = 0
+    for gid, ev in due:
+        kickoff = datetime.fromisoformat(ev["commence_time"].replace("Z", "+00:00"))
+        try:
+            r = await client.get(
+                f"{BASE}/sports/{SPORT_KEYS[league]}/events/{ev['id']}/odds",
+                params={
+                    "apiKey": settings.odds_api_key,
+                    "regions": "us",
+                    "markets": ",".join(DERIVATIVE_MARKETS),
+                    "bookmakers": settings.odds_bookmakers,
+                    "oddsFormat": "american",
+                },
+            )
+            r.raise_for_status()
+        except httpx.HTTPStatusError as e:
+            # One event's markets going missing must not abort the sweep.
+            log.warning("derivative poll failed for %s: %s", gid, e)
+            continue
+
+        credits += int(r.headers.get("x-requests-last", 0))
+        # Inside the final half hour this snapshot is the closing line — the one
+        # price CLV and every backtest is measured against, unreconstructable
+        # after kickoff.
+        hours = (kickoff - datetime.now(timezone.utc)).total_seconds() / 3600
+        n, _ = await _store_event(conn, league, r.json(), closing=(0 <= hours <= 0.5))
+        rows += n
+    return rows, credits
+
+
+async def poll_once(league: str, *, core_only: bool = False) -> int:
     settings = get_settings()
     if not settings.odds_api_key:
         raise SystemExit("ODDS_API_KEY not set in .env")
 
-    params = {
-        "apiKey": settings.odds_api_key,
-        "regions": "us",
-        "markets": CORE_MARKETS,
-        "bookmakers": settings.odds_bookmakers,
-        "oddsFormat": "american",
-    }
-    async with httpx.AsyncClient(timeout=30) as client:
-        r = await client.get(f"{BASE}/sports/{SPORT_KEYS[league]}/odds", params=params)
-        r.raise_for_status()
-        remaining = r.headers.get("x-requests-remaining")
-        events = r.json()
-    log.info("%s: %d events (API credits remaining: %s)", league, len(events), remaining)
-
     engine = get_engine()
-    rows = 0
-    resolved = 0
-    async with engine.begin() as conn:
-        for ev in events:
-            kickoff = datetime.fromisoformat(ev["commence_time"].replace("Z", "+00:00"))
-            gid = await resolve_event(
-                conn, league, ev["id"], ev["home_team"], ev["away_team"], kickoff
-            )
-            if gid:
-                resolved += 1
-            else:
-                # Fallback stub keeps snapshots flowing; re-resolves once schedules land.
-                gid = f"{league}:oddsapi:{ev['id']}"
-                season = kickoff.year if kickoff.month >= 6 else kickoff.year - 1
-                await conn.execute(
-                    text("""
-                        INSERT INTO games (game_id, league, season, kickoff, status)
-                        VALUES (:gid, :league, :season, :kickoff, 'scheduled')
-                        ON CONFLICT (game_id) DO NOTHING
-                    """),
-                    {"gid": gid, "league": league, "season": season, "kickoff": kickoff},
+    total = 0
+    async with httpx.AsyncClient(timeout=30) as client:
+        events, core_credits = await poll_core(client, league)
+        log.info("%s: %d events from bulk endpoint (%d credits)",
+                 league, len(events), core_credits)
+
+        async with engine.begin() as conn:
+            resolved = 0
+            for ev in events:
+                kickoff = datetime.fromisoformat(ev["commence_time"].replace("Z", "+00:00"))
+                hours = (kickoff - datetime.now(timezone.utc)).total_seconds() / 3600
+                n, ok = await _store_event(
+                    conn, league, ev, closing=(0 <= hours <= 0.5)
                 )
-            for bm in ev.get("bookmakers", []):
-                for mkt in bm.get("markets", []):
-                    res = await conn.execute(
-                        text("""
-                            INSERT INTO markets (game_id, bookmaker, market_key)
-                            VALUES (:gid, :bm, :mk)
-                            ON CONFLICT (game_id, bookmaker, market_key, player_id) DO UPDATE
-                              SET market_key = EXCLUDED.market_key
-                            RETURNING market_id
-                        """),
-                        {"gid": gid, "bm": bm["key"], "mk": mkt["key"]},
-                    )
-                    market_id = res.scalar_one()
-                    for oc in mkt.get("outcomes", []):
-                        await conn.execute(
-                            text("""
-                                INSERT INTO odds_snapshots
-                                    (market_id, outcome, line, price_american, implied_prob)
-                                VALUES (:mid, :outcome, :line, :price, :prob)
-                            """),
-                            {
-                                "mid": market_id,
-                                "outcome": oc["name"],
-                                "line": oc.get("point"),
-                                "price": int(oc["price"]),
-                                "prob": american_to_implied(int(oc["price"])),
-                            },
-                        )
-                        rows += 1
-        filled = await devig_snapshots(conn)
-    log.info("%s: %d/%d events resolved to canonical games, %d fair probs filled",
-             league, resolved, len(events), filled)
-    return rows
+                total += n
+                resolved += ok
+
+            deriv_credits = 0
+            if not core_only and league in DERIVATIVE_LEAGUES:
+                n, deriv_credits = await poll_derivatives(client, conn, league, events)
+                total += n
+                log.info("%s: %d derivative snapshot rows (%d credits)",
+                         league, n, deriv_credits)
+
+            filled = await devig_snapshots(conn)
+
+    log.info(
+        "%s: %d/%d events resolved, %d snapshot rows, %d fair probs filled, %d credits",
+        league, resolved, len(events), total, filled, core_credits + deriv_credits,
+    )
+    return total
 
 
-async def main(once: bool):
+async def main(once: bool, core_only: bool, leagues: tuple[str, ...]):
     settings = get_settings()
     while True:
-        for league in ("nfl", "ncaaf"):
+        for league in leagues:
             try:
-                n = await poll_once(league)
+                n = await poll_once(league, core_only=core_only)
                 log.info("%s: %d snapshot rows", league, n)
             except httpx.HTTPStatusError as e:
                 log.error("%s poll failed: %s", league, e)
@@ -131,5 +376,9 @@ if __name__ == "__main__":
     logging.getLogger("httpx").setLevel(logging.WARNING)
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true")
+    parser.add_argument("--core-only", action="store_true",
+                        help="skip the per-event tier (props/periods/alternates)")
+    parser.add_argument("--league", choices=("nfl", "ncaaf"), action="append",
+                        help="poll one league only (repeatable); default both")
     args = parser.parse_args()
-    asyncio.run(main(args.once))
+    asyncio.run(main(args.once, args.core_only, tuple(args.league or ("nfl", "ncaaf"))))

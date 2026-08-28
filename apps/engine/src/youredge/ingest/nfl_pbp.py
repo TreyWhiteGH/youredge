@@ -26,6 +26,7 @@ EXTRACTED = [
     "complete_pass", "interception", "touchdown", "air_yards", "yards_after_catch",
     "qb_dropback", "qb_scramble", "pass_location", "run_location",
     "wpa", "success", "field_goal_result",
+    "fumble_lost", "safety", "penalty", "sack",
 ]
 
 PLAY_COLS = [
@@ -36,6 +37,7 @@ PLAY_COLS = [
     "complete_pass", "interception", "touchdown", "air_yards", "yards_after_catch",
     "qb_dropback", "qb_scramble", "pass_location", "run_location",
     "wpa", "success", "field_goal_result",
+    "fumble_lost", "safety", "penalty", "sack",
 ]
 # Re-runs refresh these in place (they were added after the first backfill).
 ENRICH_COLS = PLAY_COLS[18:]
@@ -125,6 +127,7 @@ async def ingest_season(season: int) -> int:
                 _b(p.qb_dropback), _b(p.qb_scramble),
                 _s(p.pass_location), _s(p.run_location),
                 _f(p.wpa), _b(p.success), _s(p.field_goal_result),
+                _b(p.fumble_lost), _b(p.safety), _b(p.penalty), _b(p.sack),
             ))
 
         raw_conn = await conn.get_raw_connection()
@@ -140,7 +143,8 @@ async def ingest_season(season: int) -> int:
                 air_yards REAL, yards_after_catch REAL,
                 qb_dropback BOOLEAN, qb_scramble BOOLEAN,
                 pass_location TEXT, run_location TEXT,
-                wpa REAL, success BOOLEAN, field_goal_result TEXT
+                wpa REAL, success BOOLEAN, field_goal_result TEXT,
+                fumble_lost BOOLEAN, safety BOOLEAN, penalty BOOLEAN, sack BOOLEAN
             ) ON COMMIT DROP
         """)
         await apg.copy_records_to_table("_plays_stage", records=records, columns=PLAY_COLS)

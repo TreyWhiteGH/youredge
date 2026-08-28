@@ -77,6 +77,13 @@ _GAMES_SQL = """
 """
 
 # One row per (market, outcome) — the most recent price each book is showing.
+# The board is a featured-markets board. Since the poller widened, markets also
+# carries alternates, period lines, team totals and props — all of which have a
+# NULL player_id when the subject is a team or unresolved, so "player_id IS NULL"
+# is no longer enough to mean "the three main lines". Name them.
+FEATURED_MARKETS = ("h2h", "spreads", "totals")
+
+
 _LATEST_ODDS = text("""
     WITH latest AS (
         SELECT DISTINCT ON (s.market_id, s.outcome)
@@ -84,7 +91,7 @@ _LATEST_ODDS = text("""
                s.implied_prob, s.fair_prob, s.captured_at
         FROM odds_snapshots s
         JOIN markets m ON m.market_id = s.market_id
-        WHERE m.game_id = ANY(:gids) AND m.player_id IS NULL
+        WHERE m.game_id = ANY(:gids) AND m.market_key = ANY(:featured)
         ORDER BY s.market_id, s.outcome, s.captured_at DESC
     )
     SELECT m.game_id, m.bookmaker, m.market_key, l.outcome, l.line,
@@ -193,7 +200,8 @@ async def list_games(
         resolved: dict[str, str] = {}
         if odds and rows:
             snaps = [dict(x) for x in (await conn.execute(
-                _LATEST_ODDS, {"gids": [r["game_id"] for r in rows]},
+                _LATEST_ODDS,
+                {"gids": [r["game_id"] for r in rows], "featured": list(FEATURED_MARKETS)},
             )).mappings()]
             resolved = await _resolve_outcomes(conn, snaps)
             for snap in snaps:
@@ -249,7 +257,7 @@ async def game_detail(request: Request, game_id: str):
         if row is None:
             raise HTTPException(status_code=404, detail=f"unknown game_id {game_id}")
         snaps = [dict(x) for x in (await conn.execute(
-            _LATEST_ODDS, {"gids": [game_id]})).mappings()]
+            _LATEST_ODDS, {"gids": [game_id], "featured": list(FEATURED_MARKETS)})).mappings()]
         resolved = await _resolve_outcomes(conn, snaps)
 
     game = _game_shape(row)
@@ -285,7 +293,7 @@ async def game_odds(
                 WHERE g.game_id = :gid
             """), {"gid": game_id})).mappings().first()
         snaps = [dict(x) for x in (await conn.execute(
-            _LATEST_ODDS, {"gids": [game_id]})).mappings()]
+            _LATEST_ODDS, {"gids": [game_id], "featured": list(FEATURED_MARKETS)})).mappings()]
         resolved = await _resolve_outcomes(conn, snaps)
 
         movement = []
@@ -295,9 +303,9 @@ async def game_odds(
                     SELECT m.bookmaker, m.market_key, s.outcome, s.line,
                            s.price_american, s.fair_prob, s.captured_at
                     FROM odds_snapshots s JOIN markets m ON m.market_id = s.market_id
-                    WHERE m.game_id = :gid AND m.player_id IS NULL
+                    WHERE m.game_id = :gid AND m.market_key = ANY(:featured)
                     ORDER BY s.captured_at
-                """), {"gid": game_id})).mappings()]
+                """), {"gid": game_id, "featured": list(FEATURED_MARKETS)})).mappings()]
 
     home = {"team_id": teams["home_id"], "name": teams["home_name"], "abbr": teams["home_abbr"]}
     away = {"team_id": teams["away_id"], "name": teams["away_name"], "abbr": teams["away_abbr"]}

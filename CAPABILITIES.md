@@ -99,8 +99,10 @@ name matcher drops. `name_agrees` is surfaced, not hidden.
 
 **AI context:** roof and surface are game-level, not venue-level — retractable roofs open
 and close, and neutral-site games (216 NCAAF, 29 NFL) aren't played on the home surface.
-**Weather is NFL-only**: nflverse reports temp/wind (530 outdoor games), CFBD's weather
-endpoint is paywalled. A NULL `temp` means *not available* — never "indoors" or "calm".
+**Weather**: NCAAF now has temp, wind, precipitation, snowfall, humidity, dew point and
+condition for 2,712 of 2,762 games (2023-25), from CFBD's weather endpoint — reachable
+since the Patreon subscription. NFL remains temp/wind only (530 outdoor games, nflverse);
+it has no precipitation. A NULL `temp` means *not available* — never "indoors" or "calm".
 
 ### Tagging & memory (Phase 3 surfaces, schema live)
 
@@ -267,7 +269,15 @@ Architecture, the rules the UI holds to, and the fixes made along the way: [FRON
 - **vs-opponent samples are tiny** — 5–6 games for divisional foes, 1–2 for everyone else. "He torches Miami" is usually a sampling story.
 - **`ngs_position` is a label; PFF `slot_rate` is the real percentage.** Prefer the latter. Historical targets inherit a player's *current* NGS label.
 - **`pressure_rate_allowed` is ours**, not PFF's Pass Blocking Efficiency.
-- **NCAAF plays have no player ids** (CFBD REST omits them) — NCAAF is game-markets-first.
+- **NCAAF play-level player attribution is partial, not absent.** `/plays` omits player
+  ids, but `/plays/stats` carries them, and `play_players` now holds 124,080 player-events
+  resolved 100% to canonical ids (athlete ids are ESPN ids, the same space `players` uses
+  for college). **Upstream coverage is SEC and ACC only — 790 of 2,761 games, 28.6%.**
+  Every other FBS conference returns zero rows, consistently across 2023-25, and ESPN's
+  own APIs carry no player participants on college plays either, so this is an upstream
+  reality rather than a CFBD limitation. Absence of a player on a play is therefore never
+  evidence he was uninvolved. `Target` is also under-recorded relative to `Reception`, so
+  target share from this table alone undercounts.
 - **Scrambles count as runs** in pass-rate tendencies (nflverse convention); `qb_dropback` metrics don't have this issue.
 - **PFF weeks are PFF's** — postseason numbering is remapped on ingest; don't compare raw week integers across sources.
 - **Split facets have no top-level grade** by design; their data lives in prefixed columns via `/pff/splits`.

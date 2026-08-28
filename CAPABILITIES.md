@@ -279,12 +279,18 @@ Architecture, the rules the UI holds to, and the fixes made along the way: [FRON
 
   The remaining games are filled by parsing `plays.play_text`, written with
   `source = 'playtext'` so inference is always separable from feed. Total coverage is
-  **2,492 of 2,761 games (90.3%)**. The parser is scored against the games where both
-  exist before it is allowed to write — 60,000 plays, rusher 99.3% precision / 96.2%
-  recall, receiver 99.4% / 96.4%, passer 97.6% / 97.9%. **Sacks and interceptions are
-  deliberately not written** (79.9% and 80.2% precision): a shared sack names two
-  defenders without saying who is credited. Re-run `make validate-playtext` after any
-  change to the patterns.
+  **2,759 of 2,761 games (99.9%)**. The parser is scored against the games where both
+  exist before it writes — a fixed 60,000 plays: rusher 99.9% precision / 98.3% recall,
+  receiver 99.6% / 98.3%, passer 99.2% / 99.0%. **Sacks and interceptions are
+  deliberately not written** (32% and 34% precision). Re-run `make validate-playtext`
+  after any change to the patterns.
+
+  Play-text formats differ by conference, and that is a trap worth knowing about: the
+  first version of this parser was written and validated entirely on SEC/ACC text, so
+  it never saw the NFL-style rows other conferences use ("No Huddle-Shotgun #24
+  C.Hawkins rush middle for 1 yard gain") or the box-score form ("Trayvon Rudolph 60 Yd
+  Run"). The box-score form is used disproportionately for *scoring* plays, so the gap
+  did not lose yards at random — it lost touchdowns.
 
   Two caveats survive. `Target` is under-recorded in the feed, and CFBD names the
   intended receiver on only ~9% of incompletions, so target share undercounts from

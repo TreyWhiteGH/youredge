@@ -39,14 +39,35 @@ PASSER, RECEIVER, RUSHER, SACKER, INTERCEPTOR = (
 # Landry", "BAUER, Jase"), and tightening this drops real players.
 _NAME = r"([A-Za-z][A-Za-z.'\-’, ]*?)"
 
+# Conferences do not share a play-text format, and that mattered more than it
+# looks. The first version of this parser was written from SEC and ACC text and
+# scored against SEC and ACC ground truth, so it never saw the NFL-style rows
+# other conferences use:
+#
+#   (07:48) No Huddle-Shotgun #24 C.Hawkins rush middle for 1 yard gain to TEM08
+#   Trayvon Rudolph 60 Yd Run (Kanon Woodill Kick)
+#   C.Skattebo rushed for 1 yards. TOUCHDOWN.
+#
+# The box-score form is used disproportionately for *scoring* plays, so missing
+# it did not lose yards at random — it lost touchdowns, biasing exactly the
+# events a prop is written on.
+_PREFIXES = [
+    re.compile(r"^\(\d+:\d+\)\s*"),                       # (07:48)
+    re.compile(r"^\[[A-Z]+\]\s*"),                          # [SG]
+    re.compile(r"^(?:No.?Huddle|Shotgun|Hurry.?Up)[\w\- ]*?(?=#|[A-Z][a-z])", re.I),
+    re.compile(r"^#\d+\s*"),                                # #24
+]
+
+# 'Minnesota Penalty, illegal shift' arrives with play_type Rush and names no
+# ball carrier. Not a parse failure — there is nobody in it.
+_NO_PLAYER_EVENT = re.compile(
+    r"^\w[\w .'\-]* Penalty,|kneel|takes a knee|spike|\bTEAM\b", re.I
+)
+
 _PATTERNS: list[tuple[re.Pattern, tuple[str, ...]]] = [
-    # Order matters: 'pass complete to X' must be tried before the bare passer
-    # patterns, or the receiver is never seen.
+    # --- passing, prose form
     (re.compile(rf"^{_NAME} pass complete to {_NAME} for ", re.I), (PASSER, RECEIVER)),
     (re.compile(rf"^{_NAME} pass intercepted,", re.I), (PASSER,)),
-    # 'pass intercepted Kyron Jones return' and 'pass intercepted for a TD Kyron
-    # Jones return' are the same event; without the optional infix the greedy
-    # name capture swallowed 'for a TD' into the interceptor's name.
     (re.compile(rf"^{_NAME} pass intercepted (?:for a TD )?{_NAME} return", re.I),
      (PASSER, INTERCEPTOR)),
     (re.compile(rf"^{_NAME} pass INTERCEPTED at .*?\. Intercepted by {_NAME} at ", re.I),
@@ -54,15 +75,28 @@ _PATTERNS: list[tuple[re.Pattern, tuple[str, ...]]] = [
     (re.compile(rf"^{_NAME} pass intercepted", re.I), (PASSER,)),
     (re.compile(rf"^{_NAME} pass incomplete to {_NAME}", re.I), (PASSER, RECEIVER)),
     (re.compile(rf"^{_NAME} pass incomplete", re.I), (PASSER,)),
+    # --- passing, NFL-style and box-score forms
+    (re.compile(rf"^{_NAME} pass (?:short|deep) (?:left|right|middle) "
+                rf"(?:complete|intended) (?:to )?{_NAME}", re.I), (PASSER, RECEIVER)),
+    # The trailing capture needs something to stop at: lazy and unanchored it
+    # matches a single character, and the passer is silently lost.
+    (re.compile(rf"^{_NAME} \d+ Yd pass from {_NAME}(?:\s*\(|\s*$)", re.I),
+     (RECEIVER, PASSER)),
+    (re.compile(rf"^{_NAME} pass,? (?:complete|caught) (?:by |to )?{_NAME}", re.I),
+     (PASSER, RECEIVER)),
+    # --- sacks
     (re.compile(rf"^{_NAME} sacked by {_NAME} for ", re.I), (PASSER, SACKER)),
     (re.compile(rf"^{_NAME} sacked for ", re.I), (PASSER,)),
+    # --- rushing, every form seen
+    (re.compile(rf"^{_NAME} \d+ Yd Run", re.I), (RUSHER,)),
+    (re.compile(rf"^{_NAME} rush (?:up the middle|left|right|middle|end)?\s*for ", re.I),
+     (RUSHER,)),
+    (re.compile(rf"^{_NAME} rushed for ", re.I), (RUSHER,)),
     (re.compile(rf"^{_NAME} run for ", re.I), (RUSHER,)),
     (re.compile(rf"^{_NAME} rush for ", re.I), (RUSHER,)),
+    (re.compile(rf"^{_NAME} run to the ", re.I), (RUSHER,)),
+    (re.compile(rf"^{_NAME} (?:run|rush) ", re.I), (RUSHER,)),
 ]
-
-# Kneel-downs and spikes name a team or a clock, not a ball carrier. Excluded
-# rather than mis-attributed; nothing is priced on a kneel.
-_NON_PLAYER = re.compile(r"kneel|takes a knee|spike|\bTEAM\b", re.I)
 
 # 'sacked by Kalil Alexander and Jo'Laison Landry' — a shared sack is two players.
 _AND = re.compile(r"\s+and\s+", re.I)
@@ -78,10 +112,15 @@ def parse(play_text: str) -> list[Role]:
     if not play_text:
         return []
     text = play_text.strip()
-    # Some feeds prefix a clock and formation: '(00:29) [SG] ...'
-    text = re.sub(r"^\(\d+:\d+\)\s*", "", text)
-    text = re.sub(r"^\[[A-Z]+\]\s*", "", text)
-    if _NON_PLAYER.search(text):
+    # Formation and jersey noise sits between the clock and the player's name,
+    # so it is stripped repeatedly rather than once.
+    for _ in range(4):
+        before = text
+        for rx in _PREFIXES:
+            text = rx.sub("", text).lstrip()
+        if text == before:
+            break
+    if _NO_PLAYER_EVENT.search(text):
         return []
 
     for pattern, roles in _PATTERNS:
@@ -110,7 +149,13 @@ def _clean(name: str) -> str:
     if "," in n:
         last, _, first = n.partition(",")
         n = f"{first.strip()} {last.strip()}"
-    return " ".join(n.split())
+    n = " ".join(n.split())
+    # Some rows lead with the suffix — 'Jr.  Bert Emanuel' for Bert Emanuel Jr.
+    # Left alone it resolves to nobody, and it is one quarterback's whole season.
+    lead = n.split(" ", 1)
+    if len(lead) == 2 and lead[0].rstrip(".").lower() in ("jr", "sr", "ii", "iii", "iv"):
+        n = f"{lead[1]} {lead[0].rstrip('.')}"
+    return n
 
 
 _SUFFIX = re.compile(r"\s+(jr|sr|ii|iii|iv|v)$")

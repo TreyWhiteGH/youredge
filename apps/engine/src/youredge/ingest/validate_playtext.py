@@ -53,6 +53,10 @@ _SAMPLE = text("""
     FROM plays p
     WHERE p.play_text IS NOT NULL
       AND EXISTS (SELECT 1 FROM play_players pp WHERE pp.game_id = p.game_id)
+    -- Ordered, because an unordered LIMIT samples a different set every run and
+    -- two scores taken from different plays cannot be compared. Without this the
+    -- harness cannot tell a regression from a reshuffle.
+    ORDER BY p.game_id, p.source_play_id
     LIMIT :lim
 """)
 

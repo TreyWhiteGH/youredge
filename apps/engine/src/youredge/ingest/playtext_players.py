@@ -3,20 +3,24 @@
 CFBD's /plays/stats covers SEC and ACC — 790 of 2,761 games. This fills the rest
 from `plays.play_text`, resolved against the roster crosswalk.
 
-Only three roles are written, and the cut is not arbitrary. Scored against 60,000
-plays where the feed and the text both exist:
+Only three roles are written, and the cut is not arbitrary. Scored against a
+fixed 60,000 plays where the feed and the text both exist:
 
-    rusher      99.3% precision   96.2% recall
-    receiver    99.4%             96.4%
-    passer      97.6%             97.9%
-    sacker      79.9%             95.6%   <- not written
-    interceptor 80.2%             75.6%   <- not written
+    rusher      99.9% precision   98.3% recall
+    receiver    99.6%             98.3%
+    passer      99.2%             99.0%
+    sacker      32.3%             96.4%   <- not written
+    interceptor 33.7%             56.7%   <- not written
 
-Sacks and interceptions stay out. A shared sack names two defenders and the text
-does not say who is credited, so four rows in five being right is not good enough
-for something a model would read as a defensive rate. Rerun
-`validate_playtext.py` after any change to the patterns — the thresholds above
-are the reason this is allowed to write at all.
+Sacks and interceptions stay out. The text names every defender on a shared sack
+without saying who is credited, and the defensive-side team assignment does not
+line up with the feed's — one in three being right is not something a model
+should read as a defensive rate. Rerun `validate_playtext.py` after any change to
+the patterns; those thresholds are the reason this is allowed to write at all.
+
+End-to-end against facts outside the system: 2024 rushing leaders come out as
+Jeanty 369/2589 (actual 374/2601), Kaleb Johnson 235/1502 (240/1537), Tahj Brooks
+284/1497 (286/1505) — a percent or two under, never over.
 
 Feed rows are authoritative and never overwritten; parsed rows carry
 source='playtext' so anything downstream can weigh them differently.
@@ -53,6 +57,17 @@ RECEIVER_STAT = {
     "Pass Reception": "Reception",
     "Passing Touchdown": "Reception",
     "Pass Incompletion": "Target",
+}
+# Rushers were previously credited on any play whose text read like a run, which
+# swept in carries that never counted. A run wiped out by penalty is not a carry:
+# for one back that was 14 plays and -105 yards, inflating attempts while
+# suppressing the average. Whitelisted, like the other two roles already were.
+RUSHER_STAT = {
+    "Rush": "Rush",
+    "Rushing Touchdown": "Rush",
+    # A carry that ends in a fumble is still a carry, however the ball came out.
+    "Fumble Recovery (Own)": "Rush",
+    "Fumble Recovery (Opponent)": "Rush",
 }
 
 _SOURCE = text("""
@@ -95,7 +110,7 @@ _INSERT = text("""
 def _stat_type(role: str, play_type_raw: str | None) -> str | None:
     pt = play_type_raw or ""
     if role == RUSHER:
-        return "Rush"
+        return RUSHER_STAT.get(pt)
     if role == PASSER:
         return PASSER_STAT.get(pt)
     if role == RECEIVER:

@@ -27,6 +27,10 @@ _COUNTS = text("""
       (SELECT count(*) FROM play_players)                                      AS ncaaf_play_players,
       (SELECT count(DISTINCT game_id) FROM play_players)                       AS ncaaf_player_games,
       (SELECT count(*) FROM games WHERE weather_condition IS NOT NULL)          AS games_with_weather,
+      (SELECT count(*) FROM game_state)                                        AS games_scored,
+      (SELECT count(*) FROM taggings WHERE entity_type = 'game')               AS script_labels,
+      (SELECT count(*) FROM leg_outcomes)                                      AS leg_outcomes,
+      (SELECT count(*) FROM leg_pair_stats)                                    AS leg_pairs,
       (SELECT count(*) FROM player_game_stats)                                 AS player_game_stats,
       (SELECT count(*) FROM pff_player_stats)                                  AS pff_rows,
       (SELECT count(DISTINCT facet) FROM pff_player_stats)                     AS pff_facets,
@@ -62,6 +66,11 @@ CAPABILITIES = [
      "detail": "Portable career residual, returning production, portal churn, SP+."},
     {"id": "odds", "label": "Market prices, de-vigged", "available": True,
      "detail": "Spreads, totals, moneylines with fair probability and line movement."},
+    {"id": "empirical_joint", "label": "Empirical leg correlation", "available": True,
+     "detail": "How often two legs won together, counted over finished games and "
+               "sliced by script. Supports redundancy and script-conflict checks; "
+               "does NOT price a parlay — the marginals are base rates, not fair "
+               "probabilities, and most lines are synthetic."},
     {"id": "ncaaf_play_players", "label": "NCAAF play-level player attribution",
      "available": True,
      "detail": "Per-play player events from CFBD /plays/stats, resolved to canonical "

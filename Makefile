@@ -122,3 +122,19 @@ validate-playtext:
 
 weather-ncaaf:
 	docker compose run --rm ingest python -m youredge.ingest.cfbd_weather --seasons 2023 2024 2025
+
+# Layer B — the empirical joint. Order matters: state, then labels, then the
+# ledger, then the pair surface.
+game-state:
+	docker compose run --rm ingest python -m youredge.scripts.game_state
+
+script-labels:
+	docker compose run --rm ingest python -m youredge.scripts.label
+
+leg-ledger:
+	docker compose run --rm ingest python -m youredge.legs.ledger
+
+leg-pairs:
+	docker compose run --rm ingest python -m youredge.legs.pairs
+
+layer-b: game-state script-labels leg-ledger leg-pairs

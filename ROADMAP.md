@@ -247,7 +247,7 @@ estimate a price without the user — the gap becomes a dataset rather than a bl
 - **CLV tracking is the product's report card:** log every recommendation at recommendation-time price, compare to closing line. Positive CLV = real edge; publish it (it's also your marketing).
 - Weekly recalibration of team tendencies (shrinkage toward priors early season — Weeks 1–4 data is noisy, lean on 2025 tendencies + market priors).
 - Injury gating, line-move staleness checks (recommendation invalidates if line moves > X), user feedback loop on Critique quality.
-- Angle Library decay checks and Bettor Memory coaching launch (see Phase 3.5).
+- Angle Library decay checks and Bettor Memory coaching launch (see Phase 6).
 
 
 ## Phase 6 — AI-Native Layer (in-season, after the sim)

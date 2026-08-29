@@ -22,6 +22,7 @@ from sqlalchemy import text
 
 from youredge.db import get_engine
 from youredge.legs.critique import critique as run_critique
+from youredge.legs.hypothesis import evaluate as run_hypothesis
 
 log = logging.getLogger(__name__)
 router = APIRouter(tags=["sgp"])
@@ -84,7 +85,33 @@ async def build_around_pick(req: AnchorRequest):
 
 @router.post("/sgp/test-hypothesis")
 async def test_hypothesis(req: HypothesisRequest):
-    return _not_implemented("test-hypothesis")
+    """Test a stated theory against history, then against the price.
+
+    Live, on the same counted surface Critique uses. Answers whether the claim
+    holds and, separately, whether the market has already noticed — the second
+    being the question that decides if a true theory is worth anything.
+    """
+    if not req.hypothesis or not req.hypothesis.strip():
+        raise HTTPException(status_code=400, detail="no hypothesis supplied")
+
+    async with get_engine().connect() as conn:
+        known = await conn.execute(
+            text("SELECT 1 FROM games WHERE game_id = :gid"), {"gid": req.game_id})
+        if known.first() is None:
+            raise HTTPException(status_code=404, detail=f"unknown game {req.game_id}")
+
+        ledger = await conn.execute(
+            text("""SELECT 1 FROM leg_outcomes lo JOIN games g USING (game_id)
+                    WHERE g.league = :lg LIMIT 1"""), {"lg": req.league})
+        if ledger.first() is None:
+            return JSONResponse(status_code=501, content={
+                "error": "no outcome ledger for this league",
+                "phase": "layer-b",
+                "detail": "Run make layer-b to build leg_outcomes.",
+            })
+
+        return await run_hypothesis(
+            conn, req.league, req.game_id, req.sportsbook, req.hypothesis)
 
 
 @router.post("/sgp/critique")

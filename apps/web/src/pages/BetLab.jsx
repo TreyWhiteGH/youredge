@@ -1,10 +1,11 @@
 /* ── Bet Lab ──────────────────────────────────────────────────────────────────
    The four SGP modes, wired to the real endpoints.
 
-   Critique is live. It runs on counted history — how often these legs actually
-   won together — plus de-vigged market prices, and needs no simulator. It shows
-   per-leg edge against the sharpest book, which legs are the same bet twice, and
-   which want the game to go in different directions.
+   Two modes are live. Critique shows per-leg edge against the sharpest book,
+   which legs are the same bet twice, and which want the game to go in different
+   directions. Test a hypothesis answers whether a stated theory holds against
+   history and, separately, whether the market has already priced it in. Both run
+   on counted outcomes and need no simulator.
 
    It does not show a combined price, and the absence is the point. Pricing a
    parlay needs this game's joint distribution; multiplying historical base rates
@@ -29,9 +30,9 @@ const MODES = [
   { id: 'anchor', label: 'Build around a pick', icon: Icon.Layers,
     blurb: 'Start from a leg you already like. The engine conditions on it and finds what correlates — or tells you the anchor itself is −EV.',
     call: (ctx) => api.sgpAnchor({ ...ctx, anchor: '' }) },
-  { id: 'hypothesis', label: 'Test a hypothesis', icon: Icon.Activity,
-    blurb: '"Does this defense fade in the fourth?" becomes a query over 635k plays, not an opinion.',
-    call: (ctx) => api.sgpHypothesis({ ...ctx, hypothesis: '' }) },
+  { id: 'hypothesis', label: 'Test a hypothesis', icon: Icon.Activity, live: true,
+    blurb: 'State a theory. The engine checks whether history supports it — and separately whether the price already knows.',
+    call: (ctx) => api.sgpHypothesis(ctx) },
   { id: 'critique', label: 'Critique a slip', icon: Icon.Whistle, live: true,
     blurb: 'Paste the legs you built elsewhere. The engine flags the ones fighting each other and the ones priced too short.',
     call: (ctx) => api.sgpCritique(ctx) },
@@ -148,6 +149,86 @@ function CritiqueResult({ data }) {
   );
 }
 
+/* A theory gets two separate answers, and keeping them separate is the point: is
+   it true, and is it already in the price. A true theory the market has also
+   noticed is not an edge, and "real but fully priced" is the most common honest
+   outcome rather than a failure state. */
+const VERDICTS = {
+  supported_and_unpriced:  { tone: 'ok',   label: 'Supported, and not fully priced', body: 'History backs the claim and the current market has not moved all the way to it. This is the case worth acting on — and the one that shows up least often.' },
+  supported_but_priced:    { tone: 'mute', label: 'Real, but already priced',        body: 'The claim holds up. The market knows: the price sits within a few points of the historical rate, so there is nothing left to collect.' },
+  supported_no_price:      { tone: 'mute', label: 'Supported; no live price to compare', body: 'History backs the claim, but this market is not currently quoted for the selected game, so whether it is priced cannot be checked.' },
+  supported_retrospective: { tone: 'warn', label: 'True after the fact only',        body: 'This conditions on how a game turned out, which nobody knows at kickoff. It describes a pattern; it is not something you can bet.' },
+  contradicted:            { tone: 'warn', label: 'Contradicted',                    body: 'The effect is real and runs the other way. Your read is backwards, which is more useful than it not being there.' },
+  unsupported:             { tone: 'mute', label: 'Not supported',                   body: 'Enough games to look, and the difference from the base rate is within noise.' },
+  insufficient_sample:     { tone: 'mute', label: 'Too few games to say',            body: 'The split exists but the sample is too thin to separate signal from variance. Reported rather than dressed up.' },
+  unreadable:              { tone: 'warn', label: 'Could not read the claim',        body: '' },
+};
+
+function HypothesisResult({ data }) {
+  const v = VERDICTS[data.verdict] || VERDICTS.unsupported;
+  const h = data.history || {};
+  const r = data.reading || {};
+  const pct = (x) => (x == null ? '—' : `${(x * 100).toFixed(1)}%`);
+  return (
+    <div className="col" style={{ gap: 14 }}>
+      <Notice tone={v.tone} icon={v.tone === 'ok' ? Icon.Check : Icon.Lock}>
+        <strong>{v.label}.</strong> {data.detail || v.body}
+      </Notice>
+
+      {r.claim && (
+        <div className="small muted">
+          Read as <strong>{r.claim}</strong>
+          {r.team ? <> for <strong>{r.team}</strong></> : null}
+          {r.pregame_conditions?.length ? <> when <strong>{r.pregame_conditions.join(', ')}</strong></> : null}
+          {r.script_conditions?.length ? <> in <strong>{r.script_conditions.join(', ')}</strong> games</> : null}
+        </div>
+      )}
+
+      {h.conditional_n > 0 && (
+        <div style={{ overflowX: 'auto' }}>
+          <table className="table num small">
+            <thead><tr>
+              <th style={{ textAlign: 'left' }} />
+              <th>Hit rate</th><th>Games</th><th>vs base</th>
+            </tr></thead>
+            <tbody>
+              <tr>
+                <td style={{ textAlign: 'left' }}>When the condition held</td>
+                <td>{pct(h.conditional_rate)}</td><td>{h.conditional_n}</td>
+                <td>{h.lift != null ? `${h.lift}×` : '—'}</td>
+              </tr>
+              <tr className="muted">
+                <td style={{ textAlign: 'left' }}>Everywhere else in the league</td>
+                <td>{pct(h.base_rate)}</td><td>{h.base_n}</td><td>—</td>
+              </tr>
+              {data.market && (
+                <tr>
+                  <td style={{ textAlign: 'left' }}>What the market is paying now</td>
+                  <td>{pct(data.market.fair_prob)}</td>
+                  <td className="muted">{data.market.anchor_book}</td>
+                  <td>{data.market.gap_vs_history > 0 ? '+' : ''}{(data.market.gap_vs_history * 100).toFixed(1)}%</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {h.z != null && (
+        <div className="small muted" style={{ lineHeight: 1.55 }}>
+          The gap is {Math.abs(h.z).toFixed(1)} standard errors wide. Below two, a difference
+          this size turns up often enough by chance that it is not worth a bet — which is why
+          a thin sample is reported as thin rather than as a finding.
+        </div>
+      )}
+
+      {data.retrospective_note && (
+        <Notice tone="warn" icon={Icon.Alert}>{data.retrospective_note}</Notice>
+      )}
+    </div>
+  );
+}
+
 export default function BetLab() {
   const { league } = useApp();
   const [mode, setMode] = useState(MODES[0]);
@@ -155,6 +236,7 @@ export default function BetLab() {
   const [attempt, setAttempt] = useState(0);
   const [legsText, setLegsText] = useState('');
   const [quotedOdds, setQuotedOdds] = useState('');
+  const [hypothesis, setHypothesis] = useState('');
 
   // One leg per line, blanks dropped. The engine parses these itself for now;
   // richer phrasing is the narrator's job once Phase 3 lands.
@@ -168,7 +250,7 @@ export default function BetLab() {
     attempt ? `sgp:${mode.id}:${gameId}:${attempt}` : null,
     () => mode.call({
       league, game_id: gameId, sportsbook: 'draftkings', risk_mode: 'balanced',
-      legs, quoted_odds: quotedOdds || null,
+      legs, quoted_odds: quotedOdds || null, hypothesis,
     }),
     { ttl: 0 },
   );
@@ -183,13 +265,14 @@ export default function BetLab() {
       </div>
 
       <Notice tone="warn" icon={Icon.Lock}>
-        <strong>Critique is live; the other three are not.</strong> Critique runs on counted
-        history and de-vigged prices, so it can tell you which legs are redundant, which fight
-        each other, and what each one is worth against the sharpest book — all with the number
-        of games behind every claim. It will not quote you a combined price: that needs the
-        joint distribution only the simulator produces, and no model has been calibrated. The
-        other modes call the real endpoint and show its real answer — a 501 with the phase it
-        is waiting on. In the meantime, the{' '}
+        <strong>Critique and Test a hypothesis are live. Generate and Build around a pick are
+        not.</strong> The two live modes run on counted history and de-vigged prices, so they
+        can tell you which legs are redundant, which fight each other, what each is worth
+        against the sharpest book, and whether a theory holds up — or whether the price already
+        knows. Every claim carries the number of games behind it. Neither will quote a combined
+        parlay price: that needs the joint distribution only the simulator produces, and no
+        model has been calibrated. The other two call the real endpoint and show its real
+        answer — a 501 with the phase it is waiting on. In the meantime, the{' '}
         <Link to="/slate" className="accent"><strong>slate</strong></Link>,{' '}
         <Link to="/teams" className="accent"><strong>team cards</strong></Link> and{' '}
         <Link to="/compare" className="accent"><strong>compare</strong></Link> run on data that
@@ -231,7 +314,9 @@ export default function BetLab() {
               ))}
             </select>
             <button className="btn btn-primary"
-              disabled={!gameId || run.loading || (mode.id === 'critique' && legs.length < 1)}
+              disabled={!gameId || run.loading
+                || (mode.id === 'critique' && legs.length < 1)
+                || (mode.id === 'hypothesis' && !hypothesis.trim())}
               onClick={() => setAttempt((a) => a + 1)}>
               {run.loading ? <><span className="spinner" /> Running</> : <><Icon.Bolt size={14} /> Run {mode.label.toLowerCase()}</>}
             </button>
@@ -255,6 +340,19 @@ export default function BetLab() {
             </div>
           )}
 
+          {mode.id === 'hypothesis' && (
+            <div className="col" style={{ gap: 8 }}>
+              <input className="input" value={hypothesis}
+                placeholder="e.g. Seattle covers as a favorite · games with a low total go over"
+                onChange={(e) => { setHypothesis(e.target.value); setAttempt(0); }} />
+              <span className="small muted" style={{ lineHeight: 1.55 }}>
+                Reads claims about covering, winning, totals and margins — optionally scoped to
+                a team and to pre-game conditions like favourite, underdog, home or road.
+                Anything it cannot read confidently it says so rather than guessing.
+              </span>
+            </div>
+          )}
+
           {games.loading && <Loading rows={1} height={40} />}
           {!games.loading && !games.data?.games?.length && (
             <Empty icon={Icon.Slate} title="No upcoming games"
@@ -265,7 +363,8 @@ export default function BetLab() {
           {attempt > 0 && run.notBuilt && <PhaseGate error={run.notBuilt} title={`${mode.label} is not implemented`} />}
           {attempt > 0 && run.error && !run.notBuilt && <ErrorState error={run.error} />}
           {attempt > 0 && run.data && mode.id === 'critique' && <CritiqueResult data={run.data} />}
-          {attempt > 0 && run.data && mode.id !== 'critique' && (
+          {attempt > 0 && run.data && mode.id === 'hypothesis' && <HypothesisResult data={run.data} />}
+          {attempt > 0 && run.data && !['critique', 'hypothesis'].includes(mode.id) && (
             <pre className="card-pad num small" style={{ overflow: 'auto', margin: 0 }}>
               {JSON.stringify(run.data, null, 2)}
             </pre>

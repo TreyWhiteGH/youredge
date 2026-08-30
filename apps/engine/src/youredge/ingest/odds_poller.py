@@ -8,8 +8,8 @@ Two endpoints, because the API splits its catalogue:
     endpoint. Cost is markets x regions per call, independent of how many games
     come back, so this is cheap and runs for every tracked game.
   * **Everything else** — period lines, alternates, team totals, player props —
-    is only available per event. Cost is markets x regions *per event*, so this
-    tier is scheduled against time-to-kickoff instead of run every poll.
+    is only available per event, and is charged per event, so this tier is
+    scheduled against time-to-kickoff instead of run every poll.
 
 The derivative tier is the whole reason this file changed: without props, period
 lines and alternates there is no market surface for an SGP claim to be priced
@@ -45,36 +45,45 @@ SPORT_KEYS = {"nfl": "americanfootball_nfl", "ncaaf": "americanfootball_ncaaf"}
 # Bulk endpoint. Charged markets x regions per call, not per event.
 CORE_MARKETS = ("h2h", "spreads", "totals")
 
-# Per-event endpoint. Charged markets x regions per *event*, hence the schedule
-# below. Every key here was verified against a live event before being wired in.
+# Per-event endpoint. Every key below was probed against a live event before
+# being wired in; the four that came back empty at every book
+# (team_totals_q2/q3/q4, which no book quotes) are left out.
+_QUARTERS = ("q1", "q2", "q3", "q4")
+_HALVES = ("h1", "h2")
+
 PERIOD_MARKETS = (
-    "h2h_h1", "spreads_h1", "totals_h1",
-    "spreads_q1", "totals_q1",
-    "team_totals",
+    tuple(f"h2h_{p}" for p in _HALVES + _QUARTERS)
+    + tuple(f"spreads_{p}" for p in _HALVES + _QUARTERS)
+    + tuple(f"totals_{p}" for p in _HALVES + _QUARTERS)
+    # Team totals are quoted for the halves and the first quarter only.
+    + ("team_totals", "team_totals_h1", "team_totals_h2", "team_totals_q1")
 )
 ALT_MARKETS = ("alternate_spreads", "alternate_totals")
 PROP_MARKETS = (
     "player_pass_yds", "player_rush_yds", "player_reception_yds",
     "player_receptions", "player_pass_tds", "player_anytime_td",
 )
-DERIVATIVE_MARKETS = PERIOD_MARKETS + ALT_MARKETS + PROP_MARKETS
+# The "X+ yards" boards. A book posts one over-priced rung per threshold rather
+# than an over/under pair at a single number, which is how a bettor actually
+# shops a prop — and it is the only source of the tail of a player's
+# distribution, since the main line only ever reports its middle. player_tds_over
+# is the same idea for scoring: 1+, 2+, 3+.
+ALT_PROP_MARKETS = (
+    "player_pass_yds_alternate", "player_rush_yds_alternate",
+    "player_reception_yds_alternate", "player_receptions_alternate",
+    "player_pass_tds_alternate", "player_tds_over",
+)
+DERIVATIVE_MARKETS = PERIOD_MARKETS + ALT_MARKETS + PROP_MARKETS + ALT_PROP_MARKETS
 
-# Both leagues get the per-event tier now. NCAAF was excluded on projected cost;
-# measured burn came in far under that (518 credits over the first ten hours),
-# and the reason for holding it back — that college play-by-play carried no
-# player ids — no longer holds.
-#
-# College is asked for less, because college books offer less. Probing the
-# nearest game: anytime touchdown and alternate lines are quoted, yardage props,
-# team totals and period lines are not. Requesting markets that do not exist
-# spends credits to learn nothing.
+# One list for both leagues. The per-league split this replaces was built on the
+# assumption that asking for a market college books do not quote wastes credits.
+# Measured against a live event, it does not: a 29-market request against an
+# NCAAF game that returned nothing was charged **zero**, while the same request
+# against an NFL game that returned 25 markets was charged 26. The meter counts
+# what comes back, not what was asked for. So availability rations itself, and
+# college gets the full list — which is strictly better than guessing, because
+# what college books offer changes as kickoff approaches.
 DERIVATIVE_LEAGUES = ("nfl", "ncaaf")
-
-DERIVATIVE_MARKETS_BY_LEAGUE = {
-    "nfl": DERIVATIVE_MARKETS,
-    "ncaaf": ("player_anytime_td", "alternate_spreads", "alternate_totals",
-              "team_totals", "totals_h1", "spreads_h1"),
-}
 
 # A Saturday puts ~80 college games inside the near window at once, against the
 # NFL's 16. Cap the sweep and take the games closest to kickoff, which is also
@@ -90,11 +99,14 @@ MAX_NEAR_EVENTS = {"nfl": 32, "ncaaf": 20}
 DERIVATIVE_HORIZON_HOURS = 24 * 21
 MAX_FAR_EVENTS = 16
 
-# Measured, not estimated: one per-event sweep of DERIVATIVE_MARKETS costs 14
-# credits (one per market, one region). Books are free — credits scale with
-# markets x regions, not with how many bookmakers are asked for — which is why
-# odds_bookmakers stays wide while the market list is what gets rationed.
-CREDITS_PER_EVENT_SWEEP = len(DERIVATIVE_MARKETS)
+# An upper bound, not a forecast. The meter charges one credit per market that
+# actually returns a quote, so a sweep costs this much only for a game where
+# every market on the list is up — a Week 1 NFL game inside its final day, and
+# little else. A college game five days out returns none of them and costs zero.
+# Books are free: credits scale with markets x regions, never with how many
+# bookmakers are asked for, which is why odds_bookmakers stays wide while the
+# market list is what gets rationed.
+MAX_CREDITS_PER_EVENT_SWEEP = len(DERIVATIVE_MARKETS)
 
 
 def derivative_interval(hours_to_kickoff: float) -> timedelta | None:
@@ -287,8 +299,7 @@ async def _due_for_derivatives(conn, gid: str, kickoff: datetime) -> bool:
             FROM markets m JOIN odds_snapshots s USING (market_id)
             WHERE m.game_id = :gid AND m.market_key = ANY(:keys)
         """),
-        {"gid": gid, "keys": list(
-            DERIVATIVE_MARKETS_BY_LEAGUE.get(gid.split(":", 1)[0], DERIVATIVE_MARKETS))},
+        {"gid": gid, "keys": list(DERIVATIVE_MARKETS)},
     )).scalar()
     return last is None or (datetime.now(timezone.utc) - last) >= interval
 
@@ -338,8 +349,7 @@ async def poll_derivatives(client, conn, league: str, events: list[dict]) -> tup
                 params={
                     "apiKey": settings.odds_api_key,
                     "regions": "us",
-                    "markets": ",".join(
-                        DERIVATIVE_MARKETS_BY_LEAGUE.get(league, DERIVATIVE_MARKETS)),
+                    "markets": ",".join(DERIVATIVE_MARKETS),
                     "bookmakers": settings.odds_bookmakers,
                     "oddsFormat": "american",
                 },

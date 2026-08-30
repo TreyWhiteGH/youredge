@@ -138,3 +138,8 @@ leg-pairs:
 	docker compose run --rm ingest python -m youredge.legs.pairs
 
 layer-b: game-state script-labels leg-ledger leg-pairs
+
+# CFBD passing detail: intended target, plus air yards and YAC where they exist.
+# 2025 only; air yards start at week 9. See ingest/cfbd_passing.py.
+passing-ncaaf:
+	docker compose run --rm ingest python -m youredge.ingest.cfbd_passing --seasons 2025

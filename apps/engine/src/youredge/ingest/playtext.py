@@ -37,7 +37,10 @@ PASSER, RECEIVER, RUSHER, SACKER, INTERCEPTOR = (
 # A name is anything up to the phrase that ends it. Kept deliberately loose,
 # because surnames carry apostrophes, hyphens, periods and commas ("Jo'Laison
 # Landry", "BAUER, Jase"), and tightening this drops real players.
-_NAME = r"([A-Za-z][A-Za-z.'\-’, ]*?)"
+# Digits belong in the continuation class, not just the first character:
+# without them "#11 B.Sparks" stops dead after the first "1". The literal
+# anchors that follow each pattern are what stop a name swallowing yardage.
+_NAME = r"(#?[A-Za-z0-9][A-Za-z0-9.'\-’, ]*?)"
 
 # Conferences do not share a play-text format, and that mattered more than it
 # looks. The first version of this parser was written from SEC and ACC text and
@@ -76,8 +79,17 @@ _PATTERNS: list[tuple[re.Pattern, tuple[str, ...]]] = [
     (re.compile(rf"^{_NAME} pass incomplete to {_NAME}", re.I), (PASSER, RECEIVER)),
     (re.compile(rf"^{_NAME} pass incomplete", re.I), (PASSER,)),
     # --- passing, NFL-style and box-score forms
-    (re.compile(rf"^{_NAME} pass (?:short|deep) (?:left|right|middle) "
-                rf"(?:complete|intended) (?:to )?{_NAME}", re.I), (PASSER, RECEIVER)),
+    # Providers order the qualifiers both ways — "pass short left complete to X"
+    # and "pass complete short left to X" — and some put a jersey number before
+    # the receiver. Matching only the first order cost ~12k receptions in 2025,
+    # where that provider is more common.
+    # The trailing name needs a terminator. Lazy and unanchored it matches a
+    # single character and the receiver is silently lost — the same way the
+    # box-score pass pattern lost its passer.
+    (re.compile(rf"^{_NAME} pass (?:short |deep )?(?:left |right |middle )?"
+                rf"(?:complete|intended)(?: short| deep)?(?: left| right| middle)? "
+                rf"(?:to )?{_NAME}(?=\s+(?:caught|for|at|to the)\b|[,.]\s|$)", re.I),
+     (PASSER, RECEIVER)),
     # The trailing capture needs something to stop at: lazy and unanchored it
     # matches a single character, and the passer is silently lost.
     (re.compile(rf"^{_NAME} \d+ Yd pass from {_NAME}(?:\s*\(|\s*$)", re.I),
@@ -143,8 +155,14 @@ def _clean(name: str) -> str:
     'BAUER, Jase' becomes 'Jase BAUER': the surname-first form is a display
     convention, and leaving it reversed would fail every roster lookup.
     """
-    n = name.strip().strip(".,")
+    # A jersey number can lead the name mid-sentence, not just at the start of
+    # the play text: "pass complete short left to #11 B.Sparks".
+    n = re.sub(r"^#\d+\s*", "", name.strip()).strip(".,")
     if not n or len(n) < 2:
+        return ""
+    # Some rows simply omit the name — "pass complete to  for 18 yds" — and a
+    # loose pattern then captures the preposition. Never a player.
+    if n.lower() in {"to", "for", "at", "by", "the", "and"}:
         return ""
     if "," in n:
         last, _, first = n.partition(",")

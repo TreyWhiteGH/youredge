@@ -304,9 +304,18 @@ Architecture, the rules the UI holds to, and the fixes made along the way: [FRON
   Run"). The box-score form is used disproportionately for *scoring* plays, so the gap
   did not lose yards at random — it lost touchdowns.
 
-  Two caveats survive. `Target` is under-recorded in the feed, and CFBD names the
-  intended receiver on only ~9% of incompletions, so target share undercounts from
-  either source. And absence of a player on a play is never evidence he was uninvolved.
+  **Target share is fixed for 2025 and still broken before it.** CFBD's `/passing/plays`
+  endpoint carries `targetId` on 96% of completions and 89% of incompletions, against
+  the ~9% recoverable from play text — 49,202 target rows for 2025 against roughly 1,500
+  for each of 2023 and 2024. Use 2025 for anything that depends on target share; do not
+  pool it with the earlier seasons, which will read as though nobody was thrown at.
+
+  Air yards and yards after catch arrive on the same endpoint and are **season-partial
+  in a way that matters**: zero through week 8 of 2025, then 91–99% from week 9 onward
+  (41.4% and 25.6% for the season as a whole, nothing at all for 2023–24). Any aDOT or
+  air-yards split must be filtered to week ≥ 9, or it silently describes half a season.
+
+  Absence of a player on a play is never evidence he was uninvolved.
 - **Scrambles count as runs** in pass-rate tendencies (nflverse convention); `qb_dropback` metrics don't have this issue.
 - **PFF weeks are PFF's** — postseason numbering is remapped on ingest; don't compare raw week integers across sources.
 - **Split facets have no top-level grade** by design; their data lives in prefixed columns via `/pff/splits`.

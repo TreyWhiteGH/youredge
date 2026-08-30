@@ -79,6 +79,13 @@ export async function request(path, { params, signal, method = 'GET', body } = {
 export const getHealth   = (o) => request('/football/health', o);
 export const getCoverage = (o) => request('/football/coverage', o);
 
+/* ── Live ──
+   The one endpoint that is not database-backed. `date` is always sent by the caller,
+   never left to the server: a Saturday-night college kickoff is already Sunday in UTC,
+   so "today's games" can only be answered from the viewer's own clock. */
+export const getLive = (league, params, o) =>
+  request(`/${league}/live`, { params, ...o });
+
 /* ── Slate & matchups ── */
 export const listTeams = (league, params, o) =>
   request(`/${league}/teams`, { params, ...o });

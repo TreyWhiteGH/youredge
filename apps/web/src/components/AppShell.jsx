@@ -15,6 +15,7 @@ import ShortcutSheet from './ShortcutSheet';
 
 const NAV = [
   { to: '/slate',   label: 'Slate',    icon: Icon.Slate },
+  { to: '/live',    label: 'Live',     icon: Icon.Live },
   { to: '/teams',   label: 'Teams',    icon: Icon.Teams },
   { to: '/players', label: 'Players',  icon: Icon.Players },
   { to: '/compare', label: 'Compare',  icon: Icon.Compare },
@@ -22,7 +23,7 @@ const NAV = [
   { to: '/data',    label: 'Data',     icon: Icon.Data },
 ];
 
-const MOBILE_NAV = NAV.filter((n) => n.to !== '/compare');
+const MOBILE_NAV = NAV.filter((n) => !['/compare', '/data'].includes(n.to));
 
 export default function AppShell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -45,11 +46,12 @@ export default function AppShell() {
     'escape': () => { setPaletteOpen(false); setHelpOpen(false); },
     'g': () => {},
     '1': () => navigate('/slate'),
-    '2': () => navigate('/teams'),
-    '3': () => navigate('/players'),
-    '4': () => navigate('/compare'),
-    '5': () => navigate('/lab'),
-    '6': () => navigate('/data'),
+    '2': () => navigate('/live'),
+    '3': () => navigate('/teams'),
+    '4': () => navigate('/players'),
+    '5': () => navigate('/compare'),
+    '6': () => navigate('/lab'),
+    '7': () => navigate('/data'),
     'l': () => setLeague(league === 'nfl' ? 'ncaaf' : 'nfl'),
     't': () => toggleTheme(),
   });

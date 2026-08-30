@@ -28,6 +28,25 @@ ARCHIVE_BOOKS = ["cfbd:consensus", "nflverse:closing", "cfbd:draftkings", "cfbd:
 BOOK_PREFERENCE = LIVE_BOOKS + ARCHIVE_BOOKS
 
 
+def _instant(value: str | None, field: str) -> datetime | None:
+    """Parse an ISO instant for binding.
+
+    asyncpg types parameters from how they are used, so a string compared against a
+    timestamptz column is rejected outright rather than coerced — the cast in the SQL
+    does not save it. Parsing here also means a malformed value is a 400 naming the
+    field, instead of a 500 out of the driver.
+    """
+    if value is None:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as e:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field} must be an ISO 8601 instant, got {value!r}",
+        ) from e
+
+
 def _league(request: Request) -> str:
     """`/api/nfl/games` -> "nfl". The routers mount twice, once per league."""
     return request.url.path.split("/")[2]
@@ -72,6 +91,8 @@ _GAMES_SQL = """
       AND (CAST(:status AS text) IS NULL OR g.status = :status)
       AND (CAST(:team AS text) IS NULL OR :team IN (g.home_team_id, g.away_team_id))
       AND (NOT :upcoming OR g.kickoff >= :now)
+      AND (CAST(:ko_from AS timestamptz) IS NULL OR g.kickoff >= :ko_from)
+      AND (CAST(:ko_to   AS timestamptz) IS NULL OR g.kickoff <  :ko_to)
     ORDER BY g.kickoff {order}
     LIMIT :lim
 """
@@ -183,6 +204,12 @@ async def list_games(
     status: str | None = Query(default=None, description="scheduled | live | final"),
     team_id: str | None = Query(default=None, description="canonical id, e.g. nfl:BAL"),
     upcoming: bool = Query(default=False, description="kickoff in the future only"),
+    # Absolute instants rather than a date string, deliberately. "Games from today" is a
+    # question about the caller's day, and a college Saturday night kickoff lands on
+    # Sunday in UTC — so the client sends its own local midnight boundaries and the
+    # server does not have to guess at a timezone.
+    kickoff_from: str | None = Query(default=None, description="ISO instant, inclusive"),
+    kickoff_to: str | None = Query(default=None, description="ISO instant, exclusive"),
     order: str = Query(default="asc", pattern="^(asc|desc)$"),
     limit: int = Query(default=100, le=400),
     odds: bool = Query(default=True, description="attach the best-book price line"),
@@ -193,6 +220,8 @@ async def list_games(
         rows = (await conn.execute(sql, {
             "league": league, "season": season, "week": week, "status": status,
             "team": team_id, "upcoming": upcoming, "lim": limit,
+            "ko_from": _instant(kickoff_from, "kickoff_from"),
+            "ko_to": _instant(kickoff_to, "kickoff_to"),
             "now": datetime.now(timezone.utc),
         })).mappings().all()
 
@@ -252,7 +281,7 @@ async def game_detail(request: Request, game_id: str):
             text(_GAMES_SQL.format(order="ASC").replace(
                 "AND (NOT :upcoming OR g.kickoff >= :now)", "AND g.game_id = :gid")),
             {"league": league, "season": None, "week": None, "status": None,
-             "team": None, "lim": 1, "gid": game_id},
+             "team": None, "lim": 1, "gid": game_id, "ko_from": None, "ko_to": None},
         )).mappings().first()
         if row is None:
             raise HTTPException(status_code=404, detail=f"unknown game_id {game_id}")

@@ -72,6 +72,46 @@ export function relativeTime(iso) {
   return delta > 0 ? `${fmt} ago` : `in ${fmt}`;
 }
 
+/* ── Local days ──
+   The server stores kickoffs as instants and must not guess at a timezone. These turn
+   the viewer's local calendar day into the boundaries the API filters on, so "today"
+   means the day the person is actually living in. */
+
+export const localDay = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** [start, end) instants spanning the local calendar day that `iso` falls in. */
+export function localDayBounds(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const start = new Date(y, m - 1, d, 0, 0, 0, 0);
+  const end = new Date(y, m - 1, d + 1, 0, 0, 0, 0);
+  return { from: start.toISOString(), to: end.toISOString() };
+}
+
+export const shiftDay = (iso, days) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return localDay(new Date(y, m - 1, d + days));
+};
+
+export const isToday = (iso) => iso === localDay();
+
+/** "today" / "yesterday" / "on Sat, Aug 29" — reads correctly inside a sentence. */
+export const dayPhrase = (iso) => {
+  const label = dayLabel(iso);
+  return ['Today', 'Yesterday', 'Tomorrow'].includes(label)
+    ? label.toLowerCase()
+    : `on ${label}`;
+};
+
+export const dayLabel = (iso) => {
+  if (isToday(iso)) return 'Today';
+  if (iso === shiftDay(localDay(), -1)) return 'Yesterday';
+  if (iso === shiftDay(localDay(), 1)) return 'Tomorrow';
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined,
+    { weekday: 'short', month: 'short', day: 'numeric' });
+};
+
 /* ── Semantics ── */
 
 /** Rank → 0..1 percentile, where 1 is best. `of` is the field size the engine ranked in. */

@@ -8,7 +8,7 @@ from youredge import __version__
 from fastapi import Depends, HTTPException, Request
 
 from youredge.api.routes import (
-    games, meta, ncaaf, pff_drop, players, sgp, teams, tendencies,
+    games, live, meta, ncaaf, pff_drop, players, sgp, teams, tendencies,
 )
 from youredge.db import get_engine
 
@@ -74,6 +74,7 @@ app.include_router(players.router, prefix="/api/nfl", dependencies=_guard)
 app.include_router(teams.router, prefix="/api/nfl", dependencies=_guard)
 app.include_router(tendencies.router, prefix="/api/nfl", dependencies=_guard)
 app.include_router(games.router, prefix="/api/nfl", dependencies=_guard)
+app.include_router(live.router, prefix="/api/nfl")
 
 # NCAAF: the shared team cards plus coaching/experience surfaces the NFL has no
 # analog for.
@@ -81,6 +82,7 @@ app.include_router(teams.router, prefix="/api/ncaaf", dependencies=_guard)
 app.include_router(tendencies.router, prefix="/api/ncaaf", dependencies=_guard)
 app.include_router(ncaaf.router, prefix="/api/ncaaf", dependencies=_guard)
 app.include_router(games.router, prefix="/api/ncaaf", dependencies=_guard)
+app.include_router(live.router, prefix="/api/ncaaf")
 
 
 @app.get("/api/football/health")

@@ -2,6 +2,7 @@ import React from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import AppShell from './components/AppShell';
 import Slate from './pages/Slate';
+import Live from './pages/Live';
 import GameDetail from './pages/GameDetail';
 import Teams from './pages/Teams';
 import TeamDetail from './pages/TeamDetail';
@@ -19,6 +20,7 @@ export default function App() {
       <Route element={<AppShell />}>
         <Route index element={<Navigate to="/slate" replace />} />
         <Route path="/slate" element={<Slate />} />
+        <Route path="/live" element={<Live />} />
         {/* League sits in the path because a canonical id already carries it, and the
             engine 400s on a mismatch — keeping them together makes links self-checking. */}
         <Route path="/games/:league/:gameId" element={<GameDetail />} />

@@ -46,7 +46,7 @@ visible beforehand in data we now store.
 | `coach_features` | 1,581 | 2016–2026 | the portable signal, computed from all prior seasons anywhere |
 | `team_season_context` | 1,434 | 2016–2026 | returning production, talent, recruiting, SP+, portal |
 | `transfers` | 23,358 | **2021–2026** | portal detail; CFBD has nothing before 2021 |
-| `odds_snapshots` (ncaaf) | ~120k | **2016–2026** | historical closing lines + live 2026 openers |
+| `odds_snapshots` (ncaaf) | 163,819 | **2016–2026** | historical closing lines + live 2026 openers |
 | `players` (ncaaf) | 44,807 | 2023–2026 | `ncaaf:<espn_athlete_id>`, with jersey + class year |
 | `player_game_stats` (ncaaf) | 177,448 | 2023–2025 | from `/games/players`; no targets/air-yards/EPA (CFBD doesn't report them) |
 | `venues` (ncaaf) | 852 | current | incl. **elevation** — Laramie 2,200m |

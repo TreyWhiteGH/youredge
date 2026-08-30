@@ -126,7 +126,9 @@ Worth recording, because the same shapes will recur.
 
 ### Honest gaps
 
-- **NCAAF props** — market confirmed live, still not polled. NFL props are accruing.
+- **NCAAF props** — now requested for every college game, but college books post a much
+  thinner board than NFL books and post it close to kickoff, so coverage stays sparse
+  until the week of a game.
 - **Play-level player ids outside SEC/ACC** — CFBD's feed covers those two conferences
   only, and ESPN publishes no player participants on college plays either. The other
   ~71% is recovered by parsing play text at 99%+ precision, written under
@@ -183,18 +185,31 @@ over/under φ = −0.98, spread × own team total +0.51, and both team totals sh
 
 Critique and Test-a-hypothesis are live. What remains before Week 1:
 
-- **Poll NCAAF props.** NFL is accruing; college is not, and the window does not reopen.
-- **De-vig upgrade** — power/Shin for two-way markets, proportional normalisation across
-  many-way markets like anytime-TD (currently skipped entirely, so those carry no
-  `fair_prob`), Pinnacle anchoring throughout. Every downstream number inherits this.
+- ~~**Poll NCAAF props.**~~ Done. Both leagues now request the full 39-key board — every
+  quarter and half, alternate ladders, player props and the "X+" ladders. The per-league
+  split was removed once the meter was measured: it charges for markets that return a
+  quote, not markets requested, so asking college for a board it does not offer is free.
+- **De-vig upgrade.** The structural half is done: rungs are grouped per line (signed, for
+  spreads), which repaired 15,932 alternate rows that had been divided by a whole ladder's
+  overround and stored at roughly a thirtieth of their true value. One-sided player ladders
+  borrow their margin from the two-way parent. What remains is the *accuracy* half —
+  power/Shin instead of multiplicative, which is worst exactly where the live data is worst
+  (a 1.60 overround on a lopsided college moneyline), and Pinnacle anchoring throughout.
+- **Price the touchdown boards.** `player_anytime_td` and `player_tds_over` still carry no
+  `fair_prob`. They are one-sided and their Yes prices legitimately sum well above 1, so
+  they need an expected-scorer target derived from the de-vigged game total rather than a
+  normalisation. Anytime TD is the most-bet SGP leg there is, so this outranks power/Shin.
 - **Freshness gating everywhere**, not just in Critique. A leg priced off a stale line
   is worse than no leg.
 - **`user_bets` writes** — log every slip run through Critique at recommendation-time
   price. This is the CLV record and the Bettor Memory substrate, and it costs nothing
   to start now.
 - **Tests.** There are none, in a system whose entire pitch is numerical honesty. The
-  minimum: de-vig sums to 1, the play-text parser's golden file, ledger hit rates stay
-  at 48–50% against closing lines, and a no-lookahead assertion.
+  minimum: de-vig sums to 1 within every rung, a ladder's rung at a player's main line
+  reproduces that main line's `fair_prob`, alternate ladders stay monotone, the play-text
+  parser's golden file, ledger hit rates stay at 48–50% against closing lines, and a
+  no-lookahead assertion. The first three are checks already run by hand on live data;
+  writing them down is what stops the next grouping change from silently undoing them.
 
 **Ship gate for Week 1:** Critique and Test-a-hypothesis polished, props flowing, CLV
 logging live. Generate and Build-around stay 501. That is a real product — it tells
@@ -320,9 +335,10 @@ The whole point of the architecture: swap the ingestion layer (nba_api / hoopR, 
   queries and de-vigged market math. That fallback became the plan, shipped, and is
   better than a fallback — those two modes make claims that stay true after the sim
   arrives, because counted history does not stop being counted.
-- **The remaining schedule risk is prop coverage, not the sim.** NFL props are accruing;
-  NCAAF props are not polled. Every day unpolled is line-movement history that cannot be
-  bought back, and the sim cannot fix it later.
+- **The remaining schedule risk is prop coverage, not the sim.** Both leagues are polled
+  now, but the depth only exists close to kickoff, so Week 1 is the first real sample.
+  Every day unpolled is line-movement history that cannot be bought back, and the sim
+  cannot fix it later.
 - **Beware validating on the only segment that has labels.** The play-text parser scored
   99%+ against SEC/ACC ground truth and was systematically dropping touchdowns in every
   other conference, because those conferences use a format SEC/ACC never produces. The

@@ -19,12 +19,17 @@ computes every number; the LLM selects and explains.***
 
 **AI context:** never invent an identifier. "Lamar" → `/players?q=` → canonical id → every other surface keys off it. Player IDs resolve *exactly* via `pff`/`espn` crosswalk rows, which is what keeps QB Josh Allen distinct from the Jaguars linebacker. If the crosswalk can't resolve something, the answer is "we can't link this," never a guess.
 
+> **Row counts here are a snapshot, and they drift the moment the poller or the
+> catch-up service writes.** `GET /football/coverage` reports them live and is the
+> only figure to quote back to anyone. The numbers below are for orientation —
+> which tables are large, which are thin — not for citation.
+
 ### Games & play-by-play
 
 | Table | Rows | What it is |
 |---|---|---|
-| `games` | 10,647 | NFL 2023–2026; **NCAAF 2016–2026** (labels backfilled for training). Complete incl. playoffs/CFP. `season_type` separates postseason; `notes` names bowls/CFP rounds (filter `ILIKE 'CFP%' OR ILIKE 'College Football Playoff%'`). |
-| `plays` | 635,436 | The modeling foundation. NFL rows (148k) enriched: `epa`, `wpa`, `success`, `complete_pass`, `interception`, `touchdown`, `air_yards`, `yards_after_catch`, `qb_dropback`, `qb_scramble`, `pass_location`, `run_location`, `field_goal_result`, score state, clock. NCAAF rows (488k) carry `ppa` in the `epa` column (CFBD's analog — different scale, **never mix leagues in one aggregate**) and `success` backfilled as `epa > 0`; `qb_dropback`/`touchdown` are nflverse-only and stay NULL. |
+| `games` | 12,553 | **NFL 2016–2026** (3,033) and **NCAAF 2016–2026** (9,520); labels backfilled for training. Complete incl. playoffs/CFP. `season_type` separates postseason; `notes` names bowls/CFP rounds (filter `ILIKE 'CFP%' OR ILIKE 'College Football Playoff%'`). |
+| `plays` | 973,169 | The modeling foundation. NFL rows (484k, 2016–2026) enriched: `epa`, `wpa`, `success`, `complete_pass`, `interception`, `touchdown`, `air_yards`, `yards_after_catch`, `qb_dropback`, `qb_scramble`, `pass_location`, `run_location`, `field_goal_result`, score state, clock. NCAAF rows (489k) carry `ppa` in the `epa` column (CFBD's analog — different scale, **never mix leagues in one aggregate**) and `success` derived as `epa > 0` at ingest time. `complete_pass`, `qb_dropback`, `touchdown` and `interception` are **not** nflverse-only: `cfbd_map` folds CFBD's precise play vocabulary into the eight shared buckets and drops them, and `ingest/cfbd_play_flags.py` recovers them from `playType`. Roughly 26% of college plays carry no PPA from the feed and so get no `success` verdict either way — that is a feed limit, not a gap. |
 
 **AI context:** every tendency, clutch metric, and script prior computes **from** this table — never quote a stat that doesn't trace here or to an official aggregate. Mode 3 hypothesis testing ("does NY's run defense fade in Q4?") is a query over `plays`, not an opinion.
 
@@ -32,10 +37,18 @@ computes every number; the LLM selects and explains.***
 
 | Table | Rows | What it is |
 |---|---|---|
-| `markets` | 23,329 | A book's priced question per game: `(game_id, bookmaker, market_key, player_id)`. DK/FD/MGM/Caesars/Pinnacle live; `cfbd:*` historical closing lines. |
-| `odds_snapshots` | 53,726 | Price time series. `implied_prob` (with vig) **and** `fair_prob` (de-vigged automatically). Unique on `(market_id, captured_at, outcome)` so re-ingests can't duplicate. |
+| `markets` | 75,351 | A book's priced question per game: `(game_id, bookmaker, market_key, player_name)`. **39 market keys** across 17 bookmakers — the three featured markets, every quarter and half of spreads/totals/h2h, team totals for the halves and Q1, alternate spread and total ladders, six player props and six "X+" player ladders. DK/FD/MGM/Caesars/Pinnacle live; `cfbd:*` historical closing lines. |
+| `odds_snapshots` | 249,637 | Price time series. `implied_prob` (with vig) **and** `fair_prob` (de-vigged). Unique on `(market_id, captured_at, outcome, line)` — the line is in the key because a ladder quotes one side at many numbers. |
 
 **AI context:** the twin columns are the point. Edge = model probability − `fair_prob`, never − `implied_prob` (that overstates edge by the vig). Snapshot history = line movement, which is CLV's raw material and a narratable fact. All odds events resolve to canonical games (100% both leagues).
+
+**What `fair_prob` means, and where it is absent.** De-vig groups a snapshot by `(market_id, captured_at, rung)` and divides each side by the pair's overround. The rung matters because a ladder keeps every step in one market row: summing across a whole alternate board gives an overround near 50, not 1.05. Spread rungs are keyed by *signed* line, since a ladder quotes both teams at every number and `|3.5|` alone gathers two complete pairs. A group must hold exactly two rows to be priced.
+
+Books quote the player ladders one-sided, so there is no complement to normalise against; those rungs borrow the margin from their two-way parent market (`player_pass_yds_alternate` divides by the overround of `player_pass_yds` for the same player and book). The check that this holds: a ladder's rung at a player's main line reproduces that main line's own `fair_prob` to three decimals.
+
+`player_anytime_td` and `player_tds_over` carry **no** `fair_prob`, deliberately. Their Yes prices legitimately sum well above 1 — two dozen candidate scorers, about five of whom score — so normalising to 1.0 would replace one wrong number with another. They need an expected-scorer target derived from the de-vigged game total, which is not built yet. Treat a missing `fair_prob` as "not priced", never as zero.
+
+The multiplicative method is still biased on longshots; power/Shin and Pinnacle anchoring are open. The worst live overround is ~1.60 on a lopsided college moneyline, which is where that bias is largest.
 
 ### Player performance
 
@@ -299,9 +312,36 @@ Architecture, the rules the UI holds to, and the fixes made along the way: [FRON
 | `make ingest-pff` | Parse PFF drops from `data/pff/` (CSV or harvested JSON). |
 | `make ingest-fcs-coaches` | Seeded sub-FBS coaching stints from `data/seeds/`; records computed from CFBD FCS games. |
 | `make ingest-cfbd-context` | NCAAF coaching, returning production, talent, SP+, recruiting, portal (2016–2026). Six CFBD calls per season, **one transaction per season** so a late failure can't discard finished ones. |
-| `make poll-odds` | One odds pass, 5 books, both leagues; resolves events, de-vigs inline. |
-| `make devig` | Backfill `fair_prob` on any snapshot group missing it. |
+| `make poll-odds` | One odds pass, both leagues; resolves events, de-vigs inline. |
+| `make devig` | Fill `fair_prob` where missing. `--rebuild` clears every value and recomputes — needed after any change to how a rung is grouped. |
+| `make catchup` | One pass of the in-season chain below. `--rebuild` forces the derived layers when only their inputs moved. |
 | `python -m youredge.ingest.player_stats --seasons …` | Game logs + QB/receiving NGS. |
+
+### Staying current
+
+Two long-running services, both under the `poller` compose profile:
+
+```bash
+docker compose --profile poller up -d poller results
+```
+
+`poller` snapshots odds. `results` runs `ingest/catchup.py` every 30 minutes:
+schedules and results, then the polls, then play-by-play for weeks holding a
+finished game with no plays, then the college play flags, then `success`, then
+drives, and finally — only when something new landed — the derived layers
+(features, game state, script labels, the leg ledger, the pair surface,
+diagnoses).
+
+Each fetch stage carries **its own** staleness test rather than riding on the
+one above it. A drive fetch or a flag backfill can be behind while plays are
+perfectly current, and a trigger that only watched for missing plays would
+report everything up to date forever. Derivations are the exception and run
+unconditionally: their `WHERE` clause already limits them to rows that need
+work, so gating them buys nothing and is how they get missed.
+
+Without this running, a finished Saturday still reads as unplayed, `scope=current`
+correctly falls back to history, and every team card says the season has not
+started.
 
 **PFF refresh (in-season):** the facet API is reachable from a logged-in `premium.pff.com` tab; the harvester posts JSON to `/api/football/pff-drop`, files land in `data/pff/` named `<facet>_<season>[_wk<N>].json`, then `make ingest-pff`. PFF postseason weeks (28/29/30/32) map to canonical 19–22 automatically.
 
@@ -311,7 +351,7 @@ Architecture, the rules the UI holds to, and the fixes made along the way: [FRON
 |---|---|---|---|
 | nflverse (nflreadpy) | none | NFL PBP, schedules, players, rosters, weekly stats, NGS, snaps, depth charts | Free |
 | CFBD | `CFBD_API_KEY` | NCAAF games/plays/lines, schedules, team metadata | Free → $10/mo |
-| The Odds API | `ODDS_API_KEY` | Live odds, 5 books, both leagues | Dev tier |
+| The Odds API | `ODDS_API_KEY` | Live odds, 17 books, 39 market keys, both leagues | 20k credits/mo |
 | PFF Premium | browser session | Grades, alignment %, coverage, protection, pressure splits | ~$40/mo |
 | Anthropic | `ANTHROPIC_API_KEY` | Phase-3 Narrator/Planner | usage |
 
@@ -381,8 +421,10 @@ Architecture, the rules the UI holds to, and the fixes made along the way: [FRON
 - **`career_sp_residual` uses a simplified talent baseline**; sound for ranking, not a
   calibrated projection.
 - **Portal is NULL before 2021**, which is not the same as zero.
-- **NCAAF has no player identity yet** — no props, no player game logs, no usage shares
-  (Phase 2). `rz_td_rate` is NULL for NCAAF because `touchdown` is nflverse-only.
+- **NCAAF player identity is partial.** Play-level ids come from CFBD for the SEC and ACC
+  and from play-text parsing elsewhere; no usage shares yet (Phase 2). College props are
+  now requested for every game, but books post far fewer of them than for the NFL, and
+  what they post appears close to kickoff.
 - **Injuries gate, never narrate.**
 
 ## 6. What's next

@@ -138,14 +138,39 @@ make ingest-venues         # incl. elevation
 ### 6. Odds
 
 ```bash
-make poll-odds             # one pass, 5 books, both leagues; de-vigs inline
-make devig                 # backfill fair_prob on any snapshot group missing it
+make poll-odds             # one pass, both leagues; de-vigs inline
+make devig                 # fill fair_prob where missing (--rebuild recomputes all)
 ```
 
 Each `poll-odds` costs API credits. It is a one-shot by design — schedule it externally
 rather than looping it while developing.
 
-### 7. Charting data (optional, licensed)
+The meter charges one credit per market that actually **returns** a quote, not per market
+requested: a 29-market request against a college game that returned nothing was charged
+zero. So asking both leagues for the full board is free where the board does not exist,
+and availability rations itself.
+
+### 7. Staying current
+
+Two services keep the running season from going stale:
+
+```bash
+docker compose --profile poller up -d poller results
+```
+
+`poller` snapshots odds on a tiered schedule. `results` runs the catch-up chain every 30
+minutes — results and polls, then play-by-play, college play flags, `success`, drives, and
+the derived layers when something new landed:
+
+```bash
+make catchup               # one pass of the same chain
+docker logs -f youredge-results
+```
+
+Without `results` running, a finished Saturday still reads as unplayed and every
+current-season team card falls back to history.
+
+### 8. Charting data (optional, licensed)
 
 There is no API key for this one. The facet API is reachable from a logged-in
 `premium.pff.com` browser tab; the harvester posts JSON to

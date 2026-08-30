@@ -24,7 +24,7 @@ Two other things drove a rewrite rather than a repair:
 - **It pointed at the wrong backend.** Every fetch went to the legacy Flask service
   (`/api/scoreboard`, `/api/picks`, `/api/generate-picks`) — basketball-era, multi-sport,
   and behind an opt-in `legacy` profile in `docker-compose.yml`. The football engine, which
-  holds 635k plays, 360k charting rows and 143k odds snapshots, had no UI at all.
+  holds 973k plays, 360k charting rows and 250k odds snapshots, had no UI at all.
 - **It presented invented numbers as real.** `MOCK_TOP_PICKS` carried fabricated
   confidence and edge values; `MOCK_GAMES` carried invented spreads. No model has been
   trained, so those numbers could not have been real — and nothing on screen said so.

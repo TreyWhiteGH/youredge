@@ -222,6 +222,33 @@ _FIX_SWAPPED = text("""
 """)
 
 
+# No score during a game can exceed the score the game finished on, and the
+# final from /games is authoritative. That makes this a correction rather than a
+# guess, and it fixes a defect the scoring timeline could not.
+#
+# The timeline takes a running maximum, because CFBD's kickoff and timeout rows
+# sometimes report a stale, low score and a maximum steps over that. Those same
+# rows sometimes report a *high* one -- 2025 UCLA has a made field goal reading
+# 10 followed immediately by a kickoff row reading 13, against a final of 10 --
+# and there a running maximum does the opposite of stepping over it: it locks
+# the wrong number in for the rest of the game. Clamping first bounds the error
+# in the direction the maximum cannot.
+#
+# Dropping kickoff rows instead was tried and is worse: it lifts college
+# reconciliation by only 0.3 points and costs the NFL its perfect score, because
+# nflverse's kickoff rows are fine and occasionally carry the only record of a
+# return touchdown.
+_CLAMP_SCORES = text("""
+    UPDATE plays p
+    SET home_score = LEAST(p.home_score, g.home_score),
+        away_score = LEAST(p.away_score, g.away_score)
+    FROM games g
+    WHERE g.game_id = p.game_id AND g.status = 'final'
+      AND g.home_score IS NOT NULL AND p.home_score IS NOT NULL
+      AND (p.home_score > g.home_score OR p.away_score > g.away_score)
+""")
+
+
 async def ingest_week(season: int, week: int, season_type: str = "regular", dump: bool = False):
     games, plays, lines = await fetch_week(season, week, season_type)
 
@@ -237,6 +264,7 @@ async def ingest_week(season: int, week: int, season_type: str = "regular", dump
     async with get_engine().begin() as conn:
         stats["success_filled"] = (await conn.execute(_FILL_SUCCESS)).rowcount
         stats["scores_unswapped"] = (await conn.execute(_FIX_SWAPPED)).rowcount
+        stats["scores_clamped"] = (await conn.execute(_CLAMP_SCORES)).rowcount
     log.info("Inserted: %s", stats)
     return stats
 

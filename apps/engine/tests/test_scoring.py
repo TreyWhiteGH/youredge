@@ -34,7 +34,7 @@ async def test_timeline_reconciles_to_the_final_score(conn):
     # omits the score on some rows and disagrees with its own game endpoint on a
     # small tail, which is a property of the feed rather than of this code --
     # the bar there is that the tail stays a tail.
-    floors = {"nfl": 1.0, "ncaaf": 0.95}
+    floors = {"nfl": 1.0, "ncaaf": 0.99}
     for league, n, exact in rows:
         rate = exact / n
         assert rate >= floors.get(league, 0.95), (
@@ -89,7 +89,7 @@ async def test_quarter_points_sum_to_the_final(conn):
     # quarter cannot add up if the plays it was summed from never carried the
     # score in the first place.
     total = await count(conn, "SELECT count(*) FROM game_state WHERE home_q1_points IS NOT NULL")
-    assert bad / max(total, 1) < 0.07, (
+    assert bad / max(total, 1) < 0.02, (
         f"{bad}/{total} games where quarter points do not sum to the final")
 
 

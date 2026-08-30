@@ -173,12 +173,20 @@ async def catch_up_plays(season: int) -> int:
 
 
 async def repair_swapped_scores() -> bool:
-    """Undo CFBD's occasional reversal of play-level scores against its own final."""
+    """Undo CFBD's reversals and overshoots against its own authoritative final.
+
+    Order matters: un-swap before clamping. A swapped game's scores are the
+    opposite way round, so clamping it first would shear both sides down to the
+    wrong team's total and destroy the evidence that it was swapped at all.
+    """
     async with get_engine().begin() as conn:
-        n = (await conn.execute(cfbd_pbp._FIX_SWAPPED)).rowcount
-    if n:
-        log.info("un-swapped play scores on %d rows", n)
-    return bool(n)
+        swapped = (await conn.execute(cfbd_pbp._FIX_SWAPPED)).rowcount
+        clamped = (await conn.execute(cfbd_pbp._CLAMP_SCORES)).rowcount
+    if swapped:
+        log.info("un-swapped play scores on %d rows", swapped)
+    if clamped:
+        log.info("clamped %d play scores to the final", clamped)
+    return bool(swapped or clamped)
 
 
 async def repair_success() -> bool:

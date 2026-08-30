@@ -13,7 +13,7 @@ computes every number; the LLM selects and explains.***
 
 | Table | Rows | What it is |
 |---|---|---|
-| `teams` | 285 | Canonical teams, both leagues. Carries `color`/`alt_color` and a `logo_url` **reference** — the artwork is never copied into this repo, so whether a mark is rendered stays a client decision.  `team_id` like `nfl:BAL`, `ncaaf:59`. `classification` marks FBS (138) vs FCS (105) for NCAAF. |
+| `teams` | 285 | Canonical teams, both leagues. Carries `color`/`alt_color`, used throughout the UI as team identity, and a `logo_url` **reference** that nothing renders — kept only so the option survives a licensing decision.  `team_id` like `nfl:BAL`, `ncaaf:59`. `classification` marks FBS (138) vs FCS (105) for NCAAF. |
 | `players` | 49,426 | NFL (4,619) `nfl:<gsis_id>` + NCAAF (44,807) `ncaaf:<espn_athlete_id>`, the id space CFBD's roster and stats endpoints share. `jersey`/`class_year` carried for college as match validators. Carries `position`, `team_id`, and `ngs_position` (NGS tracking-derived alignment: `SLOT_WR`, `SLOT_CB`, `HIGH_SAFETY`). |
 | `entity_xwalk` | 128,444 | Translation between external ID systems and canonical IDs. Sources: `cfbd`, `odds_api`, `cfbd_alias`/`nflverse_alias`/`ncaaf_alias`/`ncaaf_alias_team` (normalized names), `espn`, `pfr`, `pff`. College aliases dominate the count: ~22k players/season need team-scoped keys. |
 

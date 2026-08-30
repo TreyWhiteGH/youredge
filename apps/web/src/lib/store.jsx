@@ -18,10 +18,6 @@ export function AppProvider({ children }) {
   const [watchlist, setWatchlist] = usePersisted('ye.watchlist', []);
   const [recents, setRecents] = usePersisted('ye.recents', []);
   const [compare, setCompare] = usePersisted('ye.compare', []);
-  // Logos are trademarks and this is a betting product, so rendering them is a choice
-  // the operator makes rather than something the UI assumes. Off leaves colours and
-  // monograms, which is a complete look on its own.
-  const [showLogos, setShowLogos] = usePersisted('ye.showLogos', true);
 
   React.useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -59,12 +55,11 @@ export function AppProvider({ children }) {
     league, setLeague,
     theme, setTheme,
     toggleTheme: () => setTheme((t) => (t === 'dark' ? 'light' : 'dark')),
-    showLogos, setShowLogos, toggleLogos: () => setShowLogos((v) => !v),
     watchlist, toggleWatch, isWatched,
     recents, pushRecent, clearRecents: () => setRecents([]),
     compare, toggleCompare, inCompare, clearCompare: () => setCompare([]),
-  }), [league, setLeague, theme, setTheme, showLogos, setShowLogos, watchlist, toggleWatch,
-      isWatched, recents, pushRecent, setRecents, compare, toggleCompare, inCompare, setCompare]);
+  }), [league, setLeague, theme, setTheme, watchlist, toggleWatch, isWatched,
+      recents, pushRecent, setRecents, compare, toggleCompare, inCompare, setCompare]);
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

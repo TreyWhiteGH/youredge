@@ -1,22 +1,20 @@
 /* ── Team mark ────────────────────────────────────────────────────────────────
-   A team's visual identity, in one component so the product decision behind it
-   lives in one place.
+   A team's visual identity: its own colour, and a monogram.
 
-   Logos are trademarks belonging to the clubs, the leagues, or a licensing arm, and
-   this is a betting product — a context rights-holders treat more carefully than a
-   scores site. So the mark is a setting, not an assumption. With logos off, a team
-   still gets its own colour and monogram, which carries the recognition without
-   reproducing anyone's artwork; the app never looks generic either way.
+   No logo is rendered, deliberately. Logos are trademarks held by the clubs, the
+   leagues, or a licensing arm, and this is a betting product — a context rights-holders
+   treat far more carefully than a scores site. The `teams.logo_url` reference is still
+   stored so the option survives a licensing decision, but nothing here reaches for it,
+   and there is no setting that turns it on by accident.
 
-   The image is referenced from its origin and never copied into this repo.
+   Colour carries the recognition anyway. A slate of twenty cards reads as twenty
+   different teams on hue alone.
 ── */
 
-import React, { useState } from 'react';
-import { useApp } from '../lib/store';
+import React from 'react';
 
-/** Team colours are stored as bare hex. Some come back near-white or near-black,
- *  which disappears against one theme or the other, so they are used as an accent
- *  rather than as text and get a floor on contrast. */
+/** Team colours are stored as bare hex. Anything malformed falls back rather than
+ *  emitting `#undefined` into a style attribute. */
 export function teamColor(team, fallback = 'var(--text-faint)') {
   const c = team?.color;
   if (!c || !/^[0-9a-f]{6}$/i.test(c)) return fallback;
@@ -34,34 +32,17 @@ export function monogram(team) {
 }
 
 export default function TeamMark({ team, size = 24, className = '' }) {
-  const { showLogos } = useApp();
-  const [failed, setFailed] = useState(false);
-  const color = teamColor(team, 'var(--border-loud)');
-
-  const useLogo = showLogos && team?.logo && !failed;
-
   return (
     <span
       className={`team-mark ${className}`}
       style={{
         width: size, height: size,
-        // The colour shows through as a ring either way, so a team is identifiable
-        // even while its logo is still loading — or permanently, if logos are off.
-        '--tm-color': color,
+        '--tm-color': teamColor(team, 'var(--border-loud)'),
         fontSize: Math.max(8, Math.round(size * 0.34)),
       }}
       title={team?.name}
     >
-      {useLogo ? (
-        <img
-          src={team.logo}
-          alt=""
-          loading="lazy"
-          onError={() => setFailed(true)}
-        />
-      ) : (
-        <span className="tm-text">{monogram(team)}</span>
-      )}
+      <span className="tm-text">{monogram(team)}</span>
     </span>
   );
 }

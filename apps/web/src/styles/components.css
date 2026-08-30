@@ -569,23 +569,15 @@ table.data.linescore tbody tr:hover { background: none; }
 
 .team-mark {
   flex-shrink: 0; display: inline-grid; place-items: center;
-  border-radius: var(--r-sm); overflow: hidden; position: relative;
-  /* The team's colour as a wash plus a ring: identifiable before a logo loads, and
-     complete on its own when logos are switched off. */
-  background: color-mix(in srgb, var(--tm-color) 14%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tm-color) 42%, transparent);
+  border-radius: var(--r-sm); overflow: hidden;
+  background: color-mix(in srgb, var(--tm-color) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tm-color) 50%, transparent);
 }
-.team-mark img { width: 78%; height: 78%; object-fit: contain; display: block; }
 .team-mark .tm-text {
   font-family: var(--font-mono); font-weight: 800; letter-spacing: -0.04em;
-  color: color-mix(in srgb, var(--tm-color) 72%, var(--text-primary));
   line-height: 1;
-}
-
-/* A team's colour as a spine on its row — the cheapest way to make a slate of
-   twenty cards feel like twenty different teams. */
-.game-team { position: relative; }
-.game-team .tm-spine {
-  width: 3px; align-self: stretch; min-height: 18px; border-radius: 2px;
-  background: var(--tm-color); flex-shrink: 0; opacity: 0.85;
+  /* Blending toward the foreground is what keeps this legible at both extremes: a
+     team whose colour is near-black stays readable on the dark theme, and a
+     near-white one on the light theme, without any per-team luminance handling. */
+  color: color-mix(in srgb, var(--tm-color) 55%, var(--text-primary));
 }

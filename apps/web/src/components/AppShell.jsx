@@ -28,7 +28,7 @@ const MOBILE_NAV = NAV.filter((n) => !['/compare', '/data'].includes(n.to));
 export default function AppShell() {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const { league, setLeague, theme, toggleTheme, showLogos, toggleLogos, compare, toggleCompare, clearCompare, watchlist, recents } = useApp();
+  const { league, setLeague, theme, toggleTheme, compare, toggleCompare, clearCompare, watchlist, recents } = useApp();
   const navigate = useNavigate();
   const { pathname } = useLocation();
   // On /compare the tray is redundant — it links to the page you are already reading,
@@ -54,7 +54,6 @@ export default function AppShell() {
     '7': () => navigate('/data'),
     'l': () => setLeague(league === 'nfl' ? 'ncaaf' : 'nfl'),
     't': () => toggleTheme(),
-    'm': () => toggleLogos(),
   });
 
   const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform || '');
@@ -91,10 +90,6 @@ export default function AppShell() {
             <span className={`pulse-dot ${engineUp ? 'live' : 'down'}`} />
             <span className="tiny">{health.loading ? '…' : engineUp ? 'Engine' : 'Offline'}</span>
           </span>
-          <button className="icon-btn" onClick={toggleLogos} aria-pressed={showLogos}
-            title={showLogos ? 'Hide team logos' : 'Show team logos'}>
-            <Icon.Shield size={16} />
-          </button>
           <button className="icon-btn" onClick={() => setHelpOpen(true)} title="Keyboard shortcuts (?)">
             <Icon.CommandKey size={16} />
           </button>

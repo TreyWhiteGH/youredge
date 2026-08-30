@@ -130,7 +130,9 @@ async def insert_week(games: list[dict], plays: list[dict], lines: list[dict]) -
                 text("""
                     INSERT INTO markets (game_id, bookmaker, market_key)
                     VALUES (:gid, :bookmaker, :market_key)
-                    ON CONFLICT (game_id, bookmaker, market_key, player_id) DO UPDATE
+                    -- Identity moved to player_name in 024: player_id is derived and
+                        -- improves over time, so keying on it forks a market's history.
+                        ON CONFLICT (game_id, bookmaker, market_key, player_name) DO UPDATE
                       SET market_key = EXCLUDED.market_key
                     RETURNING market_id
                 """),
@@ -146,7 +148,9 @@ async def insert_week(games: list[dict], plays: list[dict], lines: list[dict]) -
                     INSERT INTO odds_snapshots
                         (market_id, captured_at, outcome, line, price_american, implied_prob)
                     VALUES (:mid, :captured_at, :outcome, :line, :price, :implied)
-                    ON CONFLICT (market_id, captured_at, outcome) DO NOTHING
+                    -- 023 added line to snapshot uniqueness, because an alternate-line
+                        -- market quotes the same side at a ladder of numbers.
+                        ON CONFLICT (market_id, captured_at, outcome, line) DO NOTHING
                 """),
                 {"mid": market_id, "captured_at": row["captured_at"], "outcome": row["outcome"],
                  "line": row["line"], "price": price, "implied": implied},

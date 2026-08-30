@@ -32,7 +32,9 @@ from sqlalchemy import text
 
 from youredge.config import get_settings
 from youredge.db import get_engine
-from youredge.ingest.resolve import resolve_event, resolve_nfl_player
+from youredge.ingest.resolve import (
+    _resolve_team, resolve_event, resolve_ncaaf_player, resolve_nfl_player,
+)
 from youredge.pricing.devig import devig_snapshots
 
 log = logging.getLogger(__name__)
@@ -57,11 +59,28 @@ PROP_MARKETS = (
 )
 DERIVATIVE_MARKETS = PERIOD_MARKETS + ALT_MARKETS + PROP_MARKETS
 
-# Leagues that get the per-event tier. NCAAF is excluded on cost, not principle:
-# ~130 games a week against the NFL's 16 would be an order of magnitude more
-# credits, and college props are structurally blocked anyway (CFBD play-by-play
-# carries no player ids). Revisit for period lines once the NFL burn is measured.
-DERIVATIVE_LEAGUES = ("nfl",)
+# Both leagues get the per-event tier now. NCAAF was excluded on projected cost;
+# measured burn came in far under that (518 credits over the first ten hours),
+# and the reason for holding it back — that college play-by-play carried no
+# player ids — no longer holds.
+#
+# College is asked for less, because college books offer less. Probing the
+# nearest game: anytime touchdown and alternate lines are quoted, yardage props,
+# team totals and period lines are not. Requesting markets that do not exist
+# spends credits to learn nothing.
+DERIVATIVE_LEAGUES = ("nfl", "ncaaf")
+
+DERIVATIVE_MARKETS_BY_LEAGUE = {
+    "nfl": DERIVATIVE_MARKETS,
+    "ncaaf": ("player_anytime_td", "alternate_spreads", "alternate_totals",
+              "team_totals", "totals_h1", "spreads_h1"),
+}
+
+# A Saturday puts ~80 college games inside the near window at once, against the
+# NFL's 16. Cap the sweep and take the games closest to kickoff, which is also
+# where the props actually are — availability tracks time-to-kickoff, not the
+# profile of the matchup.
+MAX_NEAR_EVENTS = {"nfl": 32, "ncaaf": 20}
 
 
 # Books post props well before the week of the game — Week 1 props were quoted a
@@ -159,12 +178,31 @@ async def _store_market(conn, gid, book, mkt, *, league, closing) -> int:
         # ever miss.
         team_subject = subject if (subject and not is_prop) else _defense_team(subject)
         if team_subject:
-            side_team_id = (await conn.execute(
-                text("SELECT team_id FROM teams WHERE league = :lg AND name = :n"),
-                {"lg": league, "n": team_subject},
-            )).scalar()
+            # Books write the full mascot name — "Eastern Michigan Eagles" against
+            # a teams.name of "Eastern Michigan" — so an exact match silently
+            # loses every college team total. The alias crosswalk built for event
+            # resolution already handles this; reuse it rather than matching
+            # weakly here.
+            side_team_id = await _resolve_team(conn, league, team_subject)
         elif subject and is_prop and league == "nfl":
             player_id = await resolve_nfl_player(conn, subject)
+        elif subject and is_prop and league == "ncaaf":
+            # College aliases are team-scoped, because rosters share surnames
+            # constantly. A prop names the game but not the side, so both are
+            # tried and a name that resolves on both is treated as resolving on
+            # neither — the whole point of scoping is not to guess.
+            sides = (await conn.execute(
+                text("SELECT home_team_id, away_team_id FROM games WHERE game_id = :gid"),
+                {"gid": gid},
+            )).first()
+            hits = set()
+            for team_id in (sides or ()):
+                if not team_id:
+                    continue
+                hit = await resolve_ncaaf_player(conn, subject, team_id)
+                if hit:
+                    hits.add(hit)
+            player_id = next(iter(hits)) if len(hits) == 1 else None
 
         market_id = (await conn.execute(_UPSERT_MARKET, {
             "gid": gid, "bm": book, "mk": mkt["key"],
@@ -249,7 +287,8 @@ async def _due_for_derivatives(conn, gid: str, kickoff: datetime) -> bool:
             FROM markets m JOIN odds_snapshots s USING (market_id)
             WHERE m.game_id = :gid AND m.market_key = ANY(:keys)
         """),
-        {"gid": gid, "keys": list(DERIVATIVE_MARKETS)},
+        {"gid": gid, "keys": list(
+            DERIVATIVE_MARKETS_BY_LEAGUE.get(gid.split(":", 1)[0], DERIVATIVE_MARKETS))},
     )).scalar()
     return last is None or (datetime.now(timezone.utc) - last) >= interval
 
@@ -279,13 +318,16 @@ async def poll_derivatives(client, conn, league: str, events: list[dict]) -> tup
         ) or f"{league}:oddsapi:{ev['id']}"
         if not await _due_for_derivatives(conn, gid, kickoff):
             continue
-        (near.append((gid, ev)) if hours <= 48 else far.append((hours, gid, ev)))
+        (near.append((hours, gid, ev)) if hours <= 48 else far.append((hours, gid, ev)))
 
+    near.sort(key=lambda t: t[0])
     far.sort(key=lambda t: t[0])
-    due = near + [(gid, ev) for _, gid, ev in far[:MAX_FAR_EVENTS]]
-    if far[MAX_FAR_EVENTS:]:
-        log.info("%s: deferring %d far events past the sweep cap",
-                 league, len(far) - MAX_FAR_EVENTS)
+    near_cap = MAX_NEAR_EVENTS.get(league, 32)
+    due = ([(gid, ev) for _, gid, ev in near[:near_cap]]
+           + [(gid, ev) for _, gid, ev in far[:MAX_FAR_EVENTS]])
+    deferred = max(0, len(near) - near_cap) + max(0, len(far) - MAX_FAR_EVENTS)
+    if deferred:
+        log.info("%s: deferring %d events past the sweep caps", league, deferred)
 
     rows = credits = 0
     for gid, ev in due:
@@ -296,7 +338,8 @@ async def poll_derivatives(client, conn, league: str, events: list[dict]) -> tup
                 params={
                     "apiKey": settings.odds_api_key,
                     "regions": "us",
-                    "markets": ",".join(DERIVATIVE_MARKETS),
+                    "markets": ",".join(
+                        DERIVATIVE_MARKETS_BY_LEAGUE.get(league, DERIVATIVE_MARKETS)),
                     "bookmakers": settings.odds_bookmakers,
                     "oddsFormat": "american",
                 },

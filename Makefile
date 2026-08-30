@@ -137,9 +137,18 @@ leg-ledger:
 leg-pairs:
 	docker compose run --rm ingest python -m youredge.legs.pairs
 
-layer-b: game-state script-labels leg-ledger leg-pairs
+layer-b: game-state script-labels leg-ledger leg-pairs diagnose
 
 # CFBD passing detail: intended target, plus air yards and YAC where they exist.
 # 2025 only; air yards start at week 9. See ingest/cfbd_passing.py.
 passing-ncaaf:
 	docker compose run --rm ingest python -m youredge.ingest.cfbd_passing --seasons 2025
+
+# Per-team-per-game diagnoses: why a side is winning or losing.
+diagnose:
+	docker compose run --rm ingest python -m youredge.scripts.diagnose
+
+# NFL scores + closing lines from nflverse. 2016-22 were missing both, which
+# silently capped every Layer B table at the 2023-25 games.
+backfill-nfl-lines:
+	docker compose run --rm ingest python -m youredge.ingest.nfl_lines --seasons 2016 2017 2018 2019 2020 2021 2022

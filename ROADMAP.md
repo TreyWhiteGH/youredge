@@ -75,8 +75,8 @@ two that never needed it.
 
 | Mode | State | Runs on |
 |---|---|---|
-| **Critique a slip** | live | counted leg outcomes + de-vigged prices |
-| **Test a hypothesis** | live | same surface, queried by claim instead of by slip |
+| **Critique a slip** | engine ready, **awaiting the real front end** | counted leg outcomes + de-vigged prices |
+| **Test a hypothesis** | engine ready, **awaiting the real front end** | same surface, queried by claim instead of by slip |
 | Generate | 501 | needs the sim — it is the only mode that must be right unprompted |
 | Build around a pick | 501 | needs conditional probabilities the sim produces |
 
@@ -85,6 +85,20 @@ conflict with the sample size on every claim, and **refuses to quote a combined
 price** — the marginals behind it are base rates, not this game's fair probabilities.
 Test-a-hypothesis answers whether a theory holds *and, separately, whether the price
 already knows*, with "real but already priced" a first-class verdict.
+
+**Both are held back from Week 1 as of Aug 30, and the reason is about the front end
+rather than the engine.** Each is a natural-language interface with no translator behind
+it. Critique asks the user to type legs a regex has to parse; Test-a-hypothesis asks for
+a theory it reads with a keyword table. Phrase either the way a person actually talks and
+the answer is "not read" — for input the engine underneath could have answered perfectly
+well. What is shipping in that case is not the mode, it is the parser's vocabulary.
+
+**These modes are still the product.** They are the reason the leg ledger, the pair
+surface and the de-vigged prices exist, and none of that work changes. What changes is
+that they ship with the reasoning layer that makes them real, instead of shipping a form
+that resembles them. The engine side is done and stays live for the LLM to call; the
+regex and the keyword table were always scaffolding, and scaffolding is not what goes in
+front of a user.
 
 ### Built
 
@@ -181,9 +195,12 @@ happened before modelling any of it.
 over/under φ = −0.98, spread × own team total +0.51, and both team totals shifting from
 +0.05 to −0.52 inside a blowout.
 
-## Phase 2 — Bet Lab, honest modes (Aug 29 → Sept 9) ← **here**
+## Phase 2 — The surfaces that stand on their own (Aug 29 → Sept 9) ← **here**
 
-Critique and Test-a-hypothesis are live. What remains before Week 1:
+With the modes parked, what ships for Week 1 is everything that needs no translation:
+the slate, the game pages with their script and diagnostic tags, and the board with fair
+value on every market. Those are read, not conversed with, and they are honest without a
+sentence of generated text. What remains:
 
 - ~~**Poll NCAAF props.**~~ Done. Both leagues now request the full 39-key board — every
   quarter and half, alternate ladders, player props and the "X+" ladders. The per-league
@@ -220,10 +237,16 @@ Critique and Test-a-hypothesis are live. What remains before Week 1:
   play-text parser's golden file, ledger hit rates holding at 48–50% against closing lines,
   and a no-lookahead assertion.
 
-**Ship gate for Week 1:** Critique and Test-a-hypothesis polished, props flowing, CLV
-logging live. Generate and Build-around stay 501. That is a real product — it tells
-you what your slip is worth and whether your read is already priced — and it makes no
-claim it cannot support.
+**Ship gate for Week 1:** every market on the board carrying a trustworthy `fair_prob`,
+the game pages showing script forecasts and per-team diagnoses with their sample sizes,
+results and tags updating on their own through the catch-up service, and the invariant
+suite green. All four modes stay behind the reasoning layer that makes them real.
+
+That is a smaller claim than the previous gate and a truer one. What it ships is a
+football database with honest prices and a vocabulary for describing games — useful to
+read on its own, and the substrate every mode needs anyway. What it does not ship is a
+conversation, because there is nothing yet to hold one. The modes follow immediately
+after, with the layer that was always meant to be in front of them.
 
 ## Phase 3 — Game script simulator (Sept, in-season)
 

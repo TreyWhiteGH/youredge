@@ -171,3 +171,7 @@ backfill-nfl-lines:
 # AP / Coaches / CFP committee polls, week by week.
 ingest-rankings:
 	docker compose run --rm ingest python -m youredge.ingest.cfbd_rankings --seasons 2024 2025 2026
+
+# Team colours and logo references (ESPN public teams endpoint).
+ingest-team-identity:
+	docker compose run --rm ingest python -m youredge.ingest.team_identity

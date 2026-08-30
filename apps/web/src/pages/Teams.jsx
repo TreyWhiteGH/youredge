@@ -10,6 +10,7 @@ import * as api from '../lib/api';
 import { useApi } from '../lib/hooks';
 import { useApp } from '../lib/store';
 import { Card, Empty, ErrorState, Loading, StarButton } from '../components/ui';
+import TeamMark from '../components/TeamMark';
 
 export default function Teams() {
   const { league, isWatched, toggleWatch, compare, toggleCompare, inCompare } = useApp();
@@ -96,13 +97,12 @@ export default function Teams() {
           return (
             <Card key={t.team_id} className="card-pad row" style={{ gap: 12 }}>
               <Link to={to} className="row" style={{ gap: 11, flex: 1, minWidth: 0 }}>
+                <TeamMark team={t} size={28} />
                 {t.rank ? (
                   <span className="rank-chip num" title={`${data.poll} — ${t.points} points`}>
                     {t.rank}
                   </span>
-                ) : (
-                  <span className="accent" style={{ display: 'grid' }}><Icon.Shield size={19} /></span>
-                )}
+                ) : null}
                 <span style={{ minWidth: 0 }}>
                   <span className="truncate" style={{ display: 'block', fontWeight: 620 }}>{t.name}</span>
                   {/* NCAAF's abbr column usually repeats the school name; show the id

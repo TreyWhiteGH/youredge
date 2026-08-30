@@ -105,6 +105,7 @@ async def list_teams(
                     GROUP BY season ORDER BY season DESC LIMIT 1
                 )
                 SELECT t.team_id, t.abbr, t.name, t.classification,
+                       t.color, t.alt_color, t.logo_url AS logo,
                        r.rank, r.points, r.first_place_votes,
                        l.season AS rank_season, l.week AS rank_week
                 FROM teams t
@@ -201,7 +202,9 @@ _GAMES_SQL = """
            g.home_score, g.away_score, g.neutral_site, g.roof, g.surface,
            g.temp, g.wind, g.notes,
            h.team_id AS home_id, h.abbr AS home_abbr, h.name AS home_name,
+           h.color AS home_color, h.logo_url AS home_logo,
            a.team_id AS away_id, a.abbr AS away_abbr, a.name AS away_name,
+           a.color AS away_color, a.logo_url AS away_logo,
            hr.rank AS home_rank, ar.rank AS away_rank,
            v.name AS venue_name, v.city AS venue_city, v.state AS venue_state,
            v.elevation AS venue_elevation, v.dome AS venue_dome
@@ -397,10 +400,12 @@ def _game_shape(r: dict) -> dict:
         "neutral_site": r["neutral_site"],
         "home": {"team_id": r["home_id"], "abbr": r["home_abbr"],
                  "name": r["home_name"], "score": r["home_score"],
-                 "rank": r["home_rank"]},
+                 "rank": r["home_rank"], "color": r["home_color"],
+                 "logo": r["home_logo"]},
         "away": {"team_id": r["away_id"], "abbr": r["away_abbr"],
                  "name": r["away_name"], "score": r["away_score"],
-                 "rank": r["away_rank"]},
+                 "rank": r["away_rank"], "color": r["away_color"],
+                 "logo": r["away_logo"]},
         # roof/surface/temp/wind are per game, not per venue: retractable roofs open and
         # a neutral-site game isn't played on the home surface. NULL temp means "not
         # reported" (CFBD's weather is paywalled) — never "indoors" or "calm".

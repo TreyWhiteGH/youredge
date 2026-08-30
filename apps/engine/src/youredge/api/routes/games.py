@@ -21,12 +21,29 @@ from youredge.ingest.resolve import normalize_name
 
 router = APIRouter(tags=["games"])
 
-# Books that quote a live price. The `cfbd:*` and `nflverse:closing` rows are historical
-# archives — useful for backtests, wrong to show as "the current line", so they are only
-# consulted when a live book has nothing and are flagged when they are.
+# Books that quote a live price. Everything else in `markets` is a historical archive —
+# seventeen bookmakers appear there and only these five are current, so the set is an
+# allowlist rather than a list of archives to enumerate and keep in sync.
+#
+# Whether an archive belongs on screen depends on whether the game has been played.
+# Before kickoff it would be masquerading as a price you could still take, so it is
+# hidden — and nothing is lost, because every upcoming game has a live book. After
+# kickoff the closing line *is* the record, and it is the only price 11,340 completed
+# games have, so it shows.
 LIVE_BOOKS = ["draftkings", "fanduel", "betmgm", "caesars", "pinnacle"]
-ARCHIVE_BOOKS = ["cfbd:consensus", "nflverse:closing", "cfbd:draftkings", "cfbd:bovada"]
-BOOK_PREFERENCE = LIVE_BOOKS + ARCHIVE_BOOKS
+BOOK_PREFERENCE = LIVE_BOOKS
+
+
+def _is_live_book(bookmaker: str) -> bool:
+    return bookmaker in LIVE_BOOKS
+
+
+def _has_kicked_off(row) -> bool:
+    """Past games keep their closing lines; upcoming ones show live quotes only."""
+    if row["status"] in ("final", "live"):
+        return True
+    kickoff = row["kickoff"]
+    return bool(kickoff and kickoff <= datetime.now(timezone.utc))
 
 
 def _instant(value: str | None, field: str) -> datetime | None:
@@ -265,7 +282,7 @@ def _shape_board(rows: list[dict], home: dict, away: dict,
     for r in rows:
         book = board.setdefault(r["bookmaker"], {
             "bookmaker": r["bookmaker"],
-            "is_live_book": r["bookmaker"] in LIVE_BOOKS,
+            "is_live_book": _is_live_book(r["bookmaker"]),
             "captured_at": r["captured_at"],
         })
         if r["captured_at"] and (not book["captured_at"] or r["captured_at"] > book["captured_at"]):
@@ -296,12 +313,19 @@ def _shape_board(rows: list[dict], home: dict, away: dict,
     return board
 
 
-def _best_book(board: dict[str, dict]) -> dict | None:
-    """The one price line the slate shows. Preference order, live books first."""
+def _best_book(board: dict[str, dict], allow_archive: bool) -> dict | None:
+    """The one price line the slate shows.
+
+    A live book wins outright. An archive is offered only for a game already played,
+    where it is the closing line rather than something you could still bet — showing one
+    on an upcoming card is what made a stale price look like today's number.
+    """
     for name in BOOK_PREFERENCE:
         if name in board:
             return board[name]
-    return next(iter(board.values()), None)
+    if not allow_archive:
+        return None
+    return next(iter(sorted(board.values(), key=lambda b: b["bookmaker"])), None)
 
 
 @router.get("/games")
@@ -350,8 +374,13 @@ async def list_games(
         g = _game_shape(r)
         if odds:
             board = _shape_board(boards.get(r["game_id"], []), g["home"], g["away"], resolved)
-            g["odds"] = _best_book(board)
-            g["books_quoting"] = len(board)
+            played = _has_kicked_off(r)
+            g["odds"] = _best_book(board, allow_archive=played)
+            live = [b for b in board.values() if b["is_live_book"]]
+            g["books_quoting"] = len(live) if not played else len(board)
+            # "No book ever priced this" and "only the closing line survives" are
+            # different facts, and a card that conflates them reads as missing data.
+            g["archive_books"] = len(board) - len(live)
         games.append(g)
     return {"league": league, "count": len(games), "games": games}
 
@@ -403,9 +432,10 @@ async def game_detail(request: Request, game_id: str):
 
     game = _game_shape(row)
     board = _shape_board(snaps, game["home"], game["away"], resolved)
-    game["odds"] = _best_book(board)
-    game["books"] = sorted(board.values(),
-                           key=lambda b: (not b["is_live_book"], b["bookmaker"]))
+    played = _has_kicked_off(row)
+    game["odds"] = _best_book(board, allow_archive=played)
+    shown = board.values() if played else [b for b in board.values() if b["is_live_book"]]
+    game["books"] = sorted(shown, key=lambda b: (not b["is_live_book"], b["bookmaker"]))
     return game
 
 
@@ -521,6 +551,10 @@ async def game_odds(
     request: Request,
     game_id: str,
     history: bool = Query(default=True, description="include the snapshot time series"),
+    include_archive: bool | None = Query(
+        default=None,
+        description="closing lines (cfbd:*, nflverse:closing). Default follows the "
+                    "game: hidden before kickoff, shown after."),
 ):
     """Every book's current price, plus how each line has moved since it opened.
 
@@ -535,7 +569,8 @@ async def game_odds(
         teams = (await conn.execute(
             text("""
                 SELECT h.team_id AS home_id, h.abbr AS home_abbr, h.name AS home_name,
-                       a.team_id AS away_id, a.abbr AS away_abbr, a.name AS away_name
+                       a.team_id AS away_id, a.abbr AS away_abbr, a.name AS away_name,
+                       g.status, g.kickoff
                 FROM games g JOIN teams h ON h.team_id = g.home_team_id
                              JOIN teams a ON a.team_id = g.away_team_id
                 WHERE g.game_id = :gid
@@ -595,12 +630,26 @@ async def game_odds(
     away = {"team_id": teams["away_id"], "name": teams["away_name"], "abbr": teams["away_abbr"]}
     board = _shape_board(snaps, home, away, resolved)
 
+    books = sorted(board.values(), key=lambda b: (not b["is_live_book"], b["bookmaker"]))
+    archive_count = sum(1 for b in books if not b["is_live_book"])
+    if include_archive is None:
+        include_archive = _has_kicked_off(teams)
+    if not include_archive:
+        books = [b for b in books if b["is_live_book"]]
+        for name, rows_ in sections.items():
+            sections[name] = [r for r in rows_ if _is_live_book(r["bookmaker"])]
+        movement = [m for m in movement if _is_live_book(m["bookmaker"])]
+
     return {
         "game_id": game_id,
-        "books": sorted(board.values(), key=lambda b: (not b["is_live_book"], b["bookmaker"])),
+        "books": books,
         "sections": sections,
         "prop_market_keys": prop_keys,
         "movement": movement,
+        # Lets the caller offer the archive deliberately instead of discovering an
+        # empty board and assuming the game was never priced.
+        "archive_books": archive_count,
+        "include_archive": include_archive,
     }
 
 

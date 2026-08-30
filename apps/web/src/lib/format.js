@@ -179,6 +179,24 @@ export const UNIT_LABEL = {
   rushing: 'Rushing',
 };
 
+export const MARKET_LABEL = {
+  h2h: 'Moneyline', spreads: 'Spread', totals: 'Total',
+  alternate_spreads: 'Alt spread', alternate_totals: 'Alt total',
+  team_totals: 'Team total',
+  h2h_h1: 'Moneyline · 1H', spreads_h1: 'Spread · 1H', totals_h1: 'Total · 1H',
+  h2h_h2: 'Moneyline · 2H', spreads_h2: 'Spread · 2H', totals_h2: 'Total · 2H',
+  spreads_q1: 'Spread · Q1', totals_q1: 'Total · Q1',
+  spreads_q2: 'Spread · Q2', totals_q2: 'Total · Q2',
+  spreads_q3: 'Spread · Q3', totals_q3: 'Total · Q3',
+  spreads_q4: 'Spread · Q4', totals_q4: 'Total · Q4',
+  player_pass_yds: 'Passing yards', player_pass_tds: 'Passing TDs',
+  player_rush_yds: 'Rushing yards', player_receptions: 'Receptions',
+  player_reception_yds: 'Receiving yards', player_anytime_td: 'Anytime TD',
+};
+
+export const marketLabel = (key) =>
+  MARKET_LABEL[key] || key.replace(/^player_/, '').replace(/_/g, ' ');
+
 export const CONDITION_LABEL = {
   outdoors: 'Outdoors', dome: 'Dome', closed: 'Roof closed',
   open: 'Roof open', retractable: 'Retractable',

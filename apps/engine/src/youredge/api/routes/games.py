@@ -297,6 +297,113 @@ async def game_detail(request: Request, game_id: str):
     return game
 
 
+# Everything the poller stores that is not one of the three featured lines. Grouped so a
+# board can render them in sections rather than as one undifferentiated list.
+ALT_MARKETS = ("alternate_spreads", "alternate_totals")
+TEAM_MARKETS = ("team_totals",)
+# Period markets are named by suffix (spreads_h1, totals_q1...), so they are matched
+# rather than enumerated — the poller can widen without this list going stale.
+PERIOD_SUFFIXES = ("_h1", "_h2", "_q1", "_q2", "_q3", "_q4")
+
+_ALL_SNAPSHOTS = text("""
+    WITH latest AS (
+        SELECT DISTINCT ON (s.market_id, s.outcome, s.line)
+               s.market_id, s.outcome, s.line, s.price_american,
+               s.implied_prob, s.fair_prob, s.captured_at
+        FROM odds_snapshots s
+        JOIN markets m ON m.market_id = s.market_id
+        WHERE m.game_id = :gid AND m.market_key = ANY(:keys)
+        ORDER BY s.market_id, s.outcome, s.line, s.captured_at DESC
+    )
+    SELECT m.bookmaker, m.market_key, m.player_id, m.player_name, m.side_team_id,
+           l.outcome, l.line, l.price_american, l.implied_prob, l.fair_prob, l.captured_at
+    FROM latest l JOIN markets m ON m.market_id = l.market_id
+""")
+
+
+async def _market_keys(conn, game_id: str) -> list[str]:
+    return list((await conn.execute(
+        text("SELECT DISTINCT market_key FROM markets WHERE game_id = :gid"),
+        {"gid": game_id},
+    )).scalars())
+
+
+@router.get("/games/{game_id}/props")
+async def game_props(
+    game_id: str,
+    market: str | None = Query(default=None, description="one market_key, e.g. player_pass_yds"),
+):
+    """Player props, grouped by the person they are about.
+
+    A prop board keyed by market makes you hunt for a player across six tables; keyed by
+    player it reads the way it is actually used. Over/under markets carry a line and two
+    sides; anytime-touchdown carries neither, only a price on "Yes", so the shape is
+    per-market rather than forced into one mould.
+
+    `player_id` is null for defence/special-teams entries — "Buffalo Bills D/ST" is not a
+    person and does not resolve to one. Those keep `side_team_id` instead, and are
+    labelled rather than dropped.
+    """
+    async with get_engine().connect() as conn:
+        exists = (await conn.execute(
+            text("SELECT 1 FROM games WHERE game_id = :gid"), {"gid": game_id})).first()
+        if exists is None:
+            raise HTTPException(status_code=404, detail=f"unknown game_id {game_id}")
+
+        keys = [k for k in await _market_keys(conn, game_id) if k.startswith("player_")]
+        if market:
+            keys = [k for k in keys if k == market]
+        rows = [dict(r) for r in (await conn.execute(
+            _ALL_SNAPSHOTS, {"gid": game_id, "keys": keys or [""]})).mappings()] if keys else []
+
+    # subject -> markets -> books. A subject is a player, or a team for D/ST entries.
+    subjects: dict[str, dict] = {}
+    for r in rows:
+        sid = r["player_id"] or r["side_team_id"] or r["player_name"]
+        subj = subjects.setdefault(sid, {
+            "subject_id": sid,
+            "player_id": r["player_id"],
+            "team_id": r["side_team_id"],
+            "name": r["player_name"],
+            "is_team_unit": r["player_id"] is None,
+            "markets": {},
+        })
+        mkt = subj["markets"].setdefault(r["market_key"], {"market_key": r["market_key"],
+                                                          "lines": {}})
+        # Books disagree on the line, so the line is part of the key, not a property of
+        # the market — an over 249.5 and an over 264.5 are different bets.
+        line_key = "-" if r["line"] is None else str(r["line"])
+        line = mkt["lines"].setdefault(line_key, {"line": r["line"], "books": {}})
+        book = line["books"].setdefault(r["bookmaker"], {"bookmaker": r["bookmaker"],
+                                                         "captured_at": r["captured_at"]})
+        book[(r["outcome"] or "").lower() or "price"] = {
+            "price_american": r["price_american"],
+            "implied_prob": r["implied_prob"],
+            "fair_prob": r["fair_prob"],
+        }
+
+    out = []
+    for subj in subjects.values():
+        subj["markets"] = [
+            {**m, "lines": sorted(m["lines"].values(),
+                                  key=lambda x: (x["line"] is None, x["line"]))}
+            for m in subj["markets"].values()
+        ]
+        for m in subj["markets"]:
+            for ln in m["lines"]:
+                ln["books"] = sorted(ln["books"].values(), key=lambda b: b["bookmaker"])
+        out.append(subj)
+    # Most-quoted first: a player six books priced is the one being talked about.
+    out.sort(key=lambda x: (-sum(len(m["lines"]) for m in x["markets"]), x["name"] or ""))
+
+    return {
+        "game_id": game_id,
+        "market_keys": sorted(keys),
+        "subjects": out,
+        "count": len(out),
+    }
+
+
 @router.get("/games/{game_id}/odds")
 async def game_odds(
     request: Request,
@@ -325,6 +432,42 @@ async def game_odds(
             _LATEST_ODDS, {"gids": [game_id], "featured": list(FEATURED_MARKETS)})).mappings()]
         resolved = await _resolve_outcomes(conn, snaps)
 
+        # Everything the poller stores beyond the three featured lines, split into the
+        # sections a board renders. Props are counted but not expanded here — they are a
+        # different shape and a much larger payload, so they have their own endpoint.
+        all_keys = await _market_keys(conn, game_id)
+        prop_keys = sorted(k for k in all_keys if k.startswith("player_"))
+        extra_keys = [k for k in all_keys
+                      if k not in FEATURED_MARKETS and not k.startswith("player_")]
+        sections: dict[str, list] = {"alternates": [], "periods": [], "team_totals": []}
+        if extra_keys:
+            extra = [dict(x) for x in (await conn.execute(
+                _ALL_SNAPSHOTS, {"gid": game_id, "keys": extra_keys})).mappings()]
+            extra_resolved = await _resolve_outcomes(conn, extra)
+            for r in extra:
+                if r["market_key"] in ALT_MARKETS:
+                    bucket = "alternates"
+                elif r["market_key"] in TEAM_MARKETS:
+                    bucket = "team_totals"
+                elif any(r["market_key"].endswith(sfx) for sfx in PERIOD_SUFFIXES):
+                    bucket = "periods"
+                else:
+                    bucket = "alternates"
+                canonical = extra_resolved.get(r["outcome"])
+                sections[bucket].append({
+                    "market_key": r["market_key"],
+                    "bookmaker": r["bookmaker"],
+                    "outcome": r["outcome"],
+                    "team_id": canonical or r["side_team_id"],
+                    "line": r["line"],
+                    "price_american": r["price_american"],
+                    "fair_prob": r["fair_prob"],
+                    "captured_at": r["captured_at"],
+                })
+            for rows_ in sections.values():
+                rows_.sort(key=lambda x: (x["market_key"], x["line"] is None,
+                                          x["line"] or 0, x["bookmaker"]))
+
         movement = []
         if history:
             movement = [dict(r) for r in (await conn.execute(
@@ -339,8 +482,11 @@ async def game_odds(
     home = {"team_id": teams["home_id"], "name": teams["home_name"], "abbr": teams["home_abbr"]}
     away = {"team_id": teams["away_id"], "name": teams["away_name"], "abbr": teams["away_abbr"]}
     board = _shape_board(snaps, home, away, resolved)
+
     return {
         "game_id": game_id,
         "books": sorted(board.values(), key=lambda b: (not b["is_live_book"], b["bookmaker"])),
+        "sections": sections,
+        "prop_market_keys": prop_keys,
         "movement": movement,
     }

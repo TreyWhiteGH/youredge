@@ -166,7 +166,8 @@ would otherwise pad the field to 237 and flatter every rank.
 | `GET /teams` | Every team in the league. NCAAF defaults to FBS — the 105 FCS teams have no odds and no context rows. |
 | `GET /games` | The slate. Filter by `season`/`week`/`status`/`team_id`, `upcoming=true`, or a `kickoff_from`/`kickoff_to` instant window. Each game carries teams, per-game conditions, and the best book's current price line. |
 | `GET /games/{game_id}` | One matchup with every book that quotes it. |
-| `GET /games/{game_id}/odds` | Full board plus the snapshot time series — line movement, which is CLV's raw material. |
+| `GET /games/{game_id}/odds` | Full board plus the snapshot time series. `sections` splits the non-featured game-level markets into alternates, period markets and team totals; `prop_market_keys` counts the props without expanding them. |
+| `GET /games/{game_id}/props` | Player props grouped by **subject** rather than by market — a prop board keyed by market makes you hunt one player across six tables. Over/under markets carry a line and two sides; anytime-touchdown carries only a price on "Yes", so shape follows market. `player_id` is null for D/ST entries, which keep `side_team_id` and are labelled rather than dropped. Books disagree on the line, so the line is part of the key: over 249.5 and over 264.5 are different bets. |
 
 Outcome strings are resolved to a side through the **`cfbd_alias` crosswalk**, not by
 comparing names: The Odds API writes `North Carolina Tar Heels` where `teams.name` is
@@ -208,6 +209,18 @@ Two things the ingest layer should not relearn the hard way:
 Live events map onto canonical ids: NCAAF for free (our `ncaaf:<id>` *is* the ESPN event
 id, and `ncaaf:24` is its team id), NFL by kickoff date plus both team abbreviations,
 with `WSH`→`WAS` and `LAR`→`LA` the only two that disagree.
+
+### Season scope — `offense` / `defense`
+
+`scope=current` returns this season and **falls back to 2023–2025 when the team has not
+played**, reporting `basis`, `games_played`, `current_season` and `fell_back` so the
+caller always knows which it got. Week one is the case that matters: an empty card is
+useless, and a silent substitution is worse. `scope` defaults to `explicit`, so existing
+callers are unaffected.
+
+The current season is read from the newest season in `games`, not from the calendar — a
+date rule would encode where each league's year turns over and be wrong whenever a
+schedule loads early.
 
 ### Coverage — `/api/football/*`
 

@@ -95,6 +95,8 @@ export const getGame = (league, gameId, o) =>
   request(`/${league}/games/${encodeURIComponent(gameId)}`, o);
 export const getGameOdds = (league, gameId, params, o) =>
   request(`/${league}/games/${encodeURIComponent(gameId)}/odds`, { params, ...o });
+export const getGameProps = (league, gameId, params, o) =>
+  request(`/${league}/games/${encodeURIComponent(gameId)}/props`, { params, ...o });
 
 /* ── Team surfaces ── */
 const team = (league, id, suffix = '') =>
@@ -116,6 +118,10 @@ export const getAbsence = (league, id, side, params, o) =>
   request(team(league, id, `/${side}/absence`), { params, ...o });
 export const getPassRate = (league, params, o) =>
   request(`/${league}/tendencies/pass-rate`, { params, ...o });
+export const getPace = (league, params, o) =>
+  request(`/${league}/tendencies/pace`, { params, ...o });
+export const getDriveOutcomes = (league, params, o) =>
+  request(`/${league}/tendencies/drive-outcomes`, { params, ...o });
 
 /* ── NCAAF-only ── */
 export const getCoaching  = (id, params, o) => request(team('ncaaf', id, '/coaching'), { params, ...o });

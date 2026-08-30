@@ -524,3 +524,24 @@ table.data tbody tr:last-child td { border-bottom: none; }
 table.data.linescore { font-size: 11px; }
 table.data.linescore th, table.data.linescore td { padding: 4px 7px; }
 table.data.linescore tbody tr:hover { background: none; }
+
+/* ── Prop board ─────────────────────────────────────────────────────────────── */
+
+.prop-line { display: flex; align-items: center; gap: 9px; min-width: 0; }
+.prop-line .ln {
+  min-width: 44px; padding: 2px 7px; border-radius: var(--r-sm);
+  background: var(--bg-input); font-size: 12px; font-weight: 700;
+  text-align: center; flex-shrink: 0;
+}
+.prop-books { display: flex; gap: 6px; overflow-x: auto; min-width: 0; padding-bottom: 2px; }
+.prop-books::-webkit-scrollbar { height: 0; }
+.prop-book {
+  display: flex; align-items: center; gap: 5px; flex-shrink: 0;
+  padding: 3px 8px; border-radius: var(--r-pill);
+  background: var(--bg-input); border: 1px solid var(--border-soft);
+  font-size: 11px; white-space: nowrap;
+}
+.prop-book .bk {
+  font-size: 9px; font-weight: 750; letter-spacing: 0.06em;
+  text-transform: uppercase; color: var(--text-faint);
+}

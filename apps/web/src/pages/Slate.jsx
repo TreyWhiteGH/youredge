@@ -9,7 +9,7 @@ import Icon from '../icons';
 import * as api from '../lib/api';
 import { useApi } from '../lib/hooks';
 import { useApp } from '../lib/store';
-import { kickoffDay, relativeTime } from '../lib/format';
+import { dayLabel, dayPhrase, isToday, kickoffDay, localDay, localDayBounds, relativeTime, shiftDay } from '../lib/format';
 import { Card, Empty, ErrorState, Loading, Notice, Section } from '../components/ui';
 import GameCard from '../components/GameCard';
 
@@ -21,13 +21,18 @@ const RANGES = [
 export default function Slate() {
   const { league, watchlist } = useApp();
   const [range, setRange] = useState('upcoming');
+  const [day, setDay] = useState(() => localDay());
 
   const upcoming = range === 'upcoming';
+  // Results are scoped to one calendar day, and the boundaries are computed from the
+  // viewer's clock rather than the server's. A Saturday college night game kicks off
+  // after midnight UTC, so a server-side date filter would file it under Sunday.
+  const bounds = localDayBounds(day);
   const params = upcoming
     ? { upcoming: true, limit: 60, order: 'asc' }
-    : { status: 'final', limit: 40, order: 'desc' };
+    : { limit: 120, order: 'asc', kickoff_from: bounds.from, kickoff_to: bounds.to };
 
-  const key = `games:${league}:${range}`;
+  const key = `games:${league}:${range}:${upcoming ? '' : day}`;
   const { data, loading, error, refetch } = useApi(
     key, (s) => api.listGames(league, params, { signal: s }), { ttl: 120_000 });
 
@@ -60,7 +65,7 @@ export default function Slate() {
           <h1>{league === 'nfl' ? 'NFL' : 'College football'} slate</h1>
           <div className="sub">
             {upcoming ? 'Scheduled games and the prices books are showing.'
-                      : 'Completed games, most recent first.'}
+                      : `Every game ${dayPhrase(day)}, by kickoff.`}
           </div>
         </div>
         <div className="spacer" />
@@ -69,6 +74,18 @@ export default function Slate() {
             <button key={r.value} className="chip" aria-pressed={range === r.value}
               onClick={() => setRange(r.value)}>{r.label}</button>
           ))}
+          {!upcoming && (
+            <>
+              <button className="icon-btn" onClick={() => setDay(shiftDay(day, -1))} title="Previous day">
+                <Icon.ChevronLeft size={16} />
+              </button>
+              <span className="chip" style={{ minWidth: 104, justifyContent: 'center' }}>{dayLabel(day)}</span>
+              <button className="icon-btn" onClick={() => setDay(shiftDay(day, 1))} title="Next day">
+                <Icon.ChevronRight size={16} />
+              </button>
+              {!isToday(day) && <button className="btn btn-sm" onClick={() => setDay(localDay())}>Today</button>}
+            </>
+          )}
           <button className="icon-btn" onClick={refetch} title="Refresh">
             <Icon.Refresh size={16} />
           </button>
@@ -89,10 +106,10 @@ export default function Slate() {
       {!loading && !error && days.length === 0 && (
         <Card><Empty
           icon={Icon.Slate}
-          title={upcoming ? 'No games scheduled' : 'No completed games'}
+          title={upcoming ? 'No games scheduled' : `No games ${dayPhrase(day)}`}
           body={upcoming
             ? 'The schedule for this league has no future kickoffs loaded. Run the schedules ingest to populate it.'
-            : 'No finals are stored for this league yet.'}
+            : 'Nothing kicked off on this date. Use the arrows to look at another day.'}
         /></Card>
       )}
 

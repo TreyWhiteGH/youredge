@@ -16,8 +16,8 @@ const GROUPS = [
   {
     label: 'Navigate',
     keys: [
-      [['1'], 'Slate'], [['2'], 'Teams'], [['3'], 'Players'],
-      [['4'], 'Compare'], [['5'], 'Bet Lab'], [['6'], 'Data'],
+      [['1'], 'Slate'], [['2'], 'Live'], [['3'], 'Teams'], [['4'], 'Players'],
+      [['5'], 'Compare'], [['6'], 'Bet Lab'], [['7'], 'Data'],
     ],
   },
   {

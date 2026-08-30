@@ -113,6 +113,13 @@ export const TrendDown = (p) => (
 export const Activity = (p) => (
   <Svg {...p}><path d="M2.5 12h4l2.5-7 4.5 14 2.7-7h5.3" /></Svg>
 );
+// Broadcast signal — arcs radiating from a point. Reads as "on air" at 16px, and is
+// distinct from Activity's waveform, which means something else in this app.
+export const Live = (p) => (
+  <Svg {...p}><circle cx="12" cy="12" r="2.2" fill="currentColor" stroke="none" />
+    <path d="M8.1 15.9a5.5 5.5 0 0 1 0-7.8M15.9 8.1a5.5 5.5 0 0 1 0 7.8" />
+    <path d="M5.3 18.7a9.5 9.5 0 0 1 0-13.4M18.7 5.3a9.5 9.5 0 0 1 0 13.4" /></Svg>
+);
 export const Bolt = (p) => (
   <Svg {...p}><path d="M13.3 2.5 4.5 13.6h6.2l-.9 7.9 8.8-11.1h-6.2l.9-7.9Z" /></Svg>
 );
@@ -203,7 +210,7 @@ export const Book = (p) => (
 export default {
   Logo, Search, Slate, Teams, Players, Odds, Lab, Data, Compare,
   Football, Whistle, Field, Shield, Trophy,
-  TrendUp, TrendDown, Activity, Bolt, Layers, Grid,
+  TrendUp, TrendDown, Activity, Bolt, Layers, Grid, Live,
   Wind, Thermometer, Dome, Mountain,
   Star, ChevronRight, ChevronLeft, ChevronDown, ChevronUp,
   Close, Check, Plus, Minus, Sun, Moon, Info, Alert, Lock, Clock,

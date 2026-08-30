@@ -8,7 +8,7 @@ GET /teams/{team_id}/offense/absence?player_id=...  same for offensive players
 
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import text
 
 from youredge.db import get_engine
@@ -49,19 +49,99 @@ _BACKUP_OFF = text("""
 """)
 
 
+Scope = Literal["current", "historical", "explicit"]
+
+
+async def _current_season(conn, league: str) -> int:
+    """The season the league is in, taken from the schedule rather than the clock.
+
+    A calendar rule would have to encode where each league's year turns over, and would
+    be wrong every time a schedule loads early. The newest season with games on the
+    books is the season we are in.
+    """
+    return (await conn.execute(
+        text("SELECT max(season) FROM games WHERE league = :lg"), {"lg": league},
+    )).scalar_one()
+
+
+async def _games_played(conn, team_id: str, season: int) -> int:
+    return (await conn.execute(
+        text("""
+            SELECT count(*) FROM games
+            WHERE season = :season AND status = 'final'
+              AND :tid IN (home_team_id, away_team_id)
+        """),
+        {"tid": team_id, "season": season},
+    )).scalar_one()
+
+
+async def _scoped_card(conn, builder, team_id: str, league: str,
+                       scope: Scope, seasons: list[int]) -> dict:
+    """Build a unit card for the requested scope, falling back when the season is empty.
+
+    Week one is the case that matters. A team with no games played has no plays to
+    aggregate, and an empty card is useless — so `current` silently becomes `historical`
+    and the response says so. The caller is told which basis it actually got, and how
+    many games are behind it, because "this season" and "the last three seasons" support
+    very different claims and the difference must never be invisible.
+    """
+    if scope == "explicit":
+        card = await builder(conn, team_id, seasons)
+        if not card:
+            return {}
+        return {**card, "basis": "explicit", "requested_scope": "explicit"}
+
+    current = await _current_season(conn, league)
+    played = await _games_played(conn, team_id, current)
+
+    if scope == "current":
+        card = await builder(conn, team_id, [current]) if played else None
+        if card:
+            return {**card, "basis": "current", "requested_scope": "current",
+                    "games_played": played, "current_season": current, "fell_back": False}
+
+    card = await builder(conn, team_id, DEFAULT_SEASONS)
+    if not card:
+        return {}
+    return {
+        **card,
+        "basis": "historical",
+        "requested_scope": scope,
+        "games_played": played,
+        "current_season": current,
+        # True only when the caller asked for this season and could not have it. A
+        # caller that asked for historical outright has not fallen back to anything.
+        "fell_back": scope == "current",
+    }
+
+
 @router.get("/teams/{team_id}/defense")
-async def defense_card(team_id: str, seasons: list[int] = Query(default=DEFAULT_SEASONS)):
+async def defense_card(
+    request: Request,
+    team_id: str,
+    scope: Scope = Query(default="explicit",
+                         description="current = this season, falling back when unplayed"),
+    seasons: list[int] = Query(default=DEFAULT_SEASONS),
+):
+    league = request.url.path.split("/")[2]
     async with get_engine().connect() as conn:
-        card = await team_defense(conn, team_id, seasons)
+        card = await _scoped_card(conn, team_defense, team_id, league, scope, seasons)
     if not card:
         raise HTTPException(status_code=404, detail=f"no defensive plays for {team_id}")
     return card
 
 
 @router.get("/teams/{team_id}/offense")
-async def offense_card(team_id: str, seasons: list[int] = Query(default=DEFAULT_SEASONS)):
+async def offense_card(
+    request: Request,
+    team_id: str,
+    scope: Scope = Query(default="explicit",
+                         description="current = this season, falling back when unplayed"),
+    seasons: list[int] = Query(default=DEFAULT_SEASONS),
+):
+    league = request.url.path.split("/")[2]
     async with get_engine().connect() as conn:
-        card = await team_offense(conn, team_id, seasons)
+        card = await _scoped_card(conn, team_offense, team_id, league, scope, seasons)
     if not card:
         raise HTTPException(status_code=404, detail=f"no offensive plays for {team_id}")
     return card

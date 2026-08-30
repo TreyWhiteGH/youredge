@@ -16,6 +16,7 @@ import { bareId } from '../lib/format';
 
 const PAGES = [
   { id: 'nav:slate',    title: 'Slate',        sub: 'Upcoming games and market prices', to: '/slate', icon: Icon.Slate },
+  { id: 'nav:live',     title: 'Live',         sub: 'Scores, clock, down & distance',    to: '/live', icon: Icon.Live },
   { id: 'nav:teams',    title: 'Teams',        sub: 'Every team, ranked by unit',       to: '/teams', icon: Icon.Teams },
   { id: 'nav:players',  title: 'Players',      sub: 'NFL player search',                to: '/players', icon: Icon.Players },
   { id: 'nav:compare',  title: 'Compare',      sub: 'Stack teams side by side',         to: '/compare', icon: Icon.Compare },

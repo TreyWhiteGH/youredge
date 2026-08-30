@@ -72,6 +72,46 @@ export function relativeTime(iso) {
   return delta > 0 ? `${fmt} ago` : `in ${fmt}`;
 }
 
+/* ── Local days ──
+   The server stores kickoffs as instants and must not guess at a timezone. These turn
+   the viewer's local calendar day into the boundaries the API filters on, so "today"
+   means the day the person is actually living in. */
+
+export const localDay = (d = new Date()) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+/** [start, end) instants spanning the local calendar day that `iso` falls in. */
+export function localDayBounds(iso) {
+  const [y, m, d] = iso.split('-').map(Number);
+  const start = new Date(y, m - 1, d, 0, 0, 0, 0);
+  const end = new Date(y, m - 1, d + 1, 0, 0, 0, 0);
+  return { from: start.toISOString(), to: end.toISOString() };
+}
+
+export const shiftDay = (iso, days) => {
+  const [y, m, d] = iso.split('-').map(Number);
+  return localDay(new Date(y, m - 1, d + days));
+};
+
+export const isToday = (iso) => iso === localDay();
+
+/** "today" / "yesterday" / "on Sat, Aug 29" — reads correctly inside a sentence. */
+export const dayPhrase = (iso) => {
+  const label = dayLabel(iso);
+  return ['Today', 'Yesterday', 'Tomorrow'].includes(label)
+    ? label.toLowerCase()
+    : `on ${label}`;
+};
+
+export const dayLabel = (iso) => {
+  if (isToday(iso)) return 'Today';
+  if (iso === shiftDay(localDay(), -1)) return 'Yesterday';
+  if (iso === shiftDay(localDay(), 1)) return 'Tomorrow';
+  const [y, m, d] = iso.split('-').map(Number);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined,
+    { weekday: 'short', month: 'short', day: 'numeric' });
+};
+
 /* ── Semantics ── */
 
 /** Rank → 0..1 percentile, where 1 is best. `of` is the field size the engine ranked in. */
@@ -138,6 +178,24 @@ export const UNIT_LABEL = {
   receiving: 'Receiving',
   rushing: 'Rushing',
 };
+
+export const MARKET_LABEL = {
+  h2h: 'Moneyline', spreads: 'Spread', totals: 'Total',
+  alternate_spreads: 'Alt spread', alternate_totals: 'Alt total',
+  team_totals: 'Team total',
+  h2h_h1: 'Moneyline · 1H', spreads_h1: 'Spread · 1H', totals_h1: 'Total · 1H',
+  h2h_h2: 'Moneyline · 2H', spreads_h2: 'Spread · 2H', totals_h2: 'Total · 2H',
+  spreads_q1: 'Spread · Q1', totals_q1: 'Total · Q1',
+  spreads_q2: 'Spread · Q2', totals_q2: 'Total · Q2',
+  spreads_q3: 'Spread · Q3', totals_q3: 'Total · Q3',
+  spreads_q4: 'Spread · Q4', totals_q4: 'Total · Q4',
+  player_pass_yds: 'Passing yards', player_pass_tds: 'Passing TDs',
+  player_rush_yds: 'Rushing yards', player_receptions: 'Receptions',
+  player_reception_yds: 'Receiving yards', player_anytime_td: 'Anytime TD',
+};
+
+export const marketLabel = (key) =>
+  MARKET_LABEL[key] || key.replace(/^player_/, '').replace(/_/g, ' ');
 
 export const CONDITION_LABEL = {
   outdoors: 'Outdoors', dome: 'Dome', closed: 'Roof closed',

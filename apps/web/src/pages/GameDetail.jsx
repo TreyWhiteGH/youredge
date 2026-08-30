@@ -7,14 +7,15 @@
    simulator lands.
 ── */
 
-import React, { useMemo } from 'react';
+import React, { useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import Icon from '../icons';
 import * as api from '../lib/api';
 import { useApi } from '../lib/hooks';
 import { useTrackVisit } from '../lib/store';
-import { american, kickoffFull, pct, relativeTime, spread } from '../lib/format';
-import { Card, CardHead, Empty, ErrorState, Loading, Notice, RankBar, Section, Stat } from '../components/ui';
+import { kickoffFull, num, ordinal, pct, signed } from '../lib/format';
+import { Badge, Card, CardHead, Empty, ErrorState, Loading, Notice, RankBar, Section, Stat } from '../components/ui';
+import MarketBoard from '../components/MarketBoard';
 
 /* The Game Tag Surface. Two claims, kept visibly apart: how this game tends to
    go given its line, and what each side tends to do. Neither is a projection —
@@ -83,6 +84,9 @@ function ScriptSurface({ data }) {
 
 export default function GameDetail() {
   const { league, gameId } = useParams();
+  // Opens on this season. The engine falls back when a team has not played yet and
+  // says so in the payload, which is what the badge on each panel reports.
+  const [scope, setScope] = useState('current');
 
   const game = useApi(`game:${gameId}`, (s) => api.getGame(league, gameId, { signal: s }));
   const odds = useApi(`odds:${gameId}`, (s) => api.getGameOdds(league, gameId, {}, { signal: s }));
@@ -129,17 +133,39 @@ export default function GameDetail() {
 
       {scripts.data && <ScriptSurface data={scripts.data} />}
 
-      <Section title="Unit matchup" sub="Both teams ranked against the same league field, 2023–2025.">
+      <Section
+        title="Unit matchup"
+        sub="Both teams ranked against the same league field."
+        action={
+          <div className="league-switch" role="group" aria-label="Season basis">
+            {[['current', 'This season'], ['historical', 'Historical']].map(([v, label]) => (
+              <button key={v} aria-pressed={scope === v} onClick={() => setScope(v)}>{label}</button>
+            ))}
+          </div>
+        }
+      >
         <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))' }}>
-          <TeamPanel league={league} team={g.away} side="Away" />
-          <TeamPanel league={league} team={g.home} side="Home" />
+          <TeamPanel league={league} team={g.away} side="Away" scope={scope} />
+          <TeamPanel league={league} team={g.home} side="Home" scope={scope} />
         </div>
       </Section>
 
-      <Section title="The board" sub="Every book quoting this game. fair_prob is the price with the vig removed.">
+      <Section title="Coaching & tendencies"
+        sub="How these teams behave, independent of who they have played.">
+        <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))' }}>
+          <TendencyPanel league={league} team={g.away} />
+          <TendencyPanel league={league} team={g.home} />
+        </div>
+      </Section>
+
+      <Section title="The board"
+        sub="Every market a book has priced for this game. fair_prob is the price with the vig removed.">
         {odds.loading && <Loading rows={2} height={90} />}
         {odds.error && <ErrorState error={odds.error} onRetry={odds.refetch} />}
-        {odds.data && <OddsBoard board={odds.data} home={g.home} away={g.away} />}
+        {odds.data && (
+          <MarketBoard league={league} gameId={gameId} board={odds.data}
+            home={g.home} away={g.away} />
+        )}
       </Section>
 
       <Notice>
@@ -183,9 +209,11 @@ function Conditions({ cond }) {
   );
 }
 
-function TeamPanel({ league, team, side }) {
-  const off = useApi(`off:${team.team_id}`, (s) => api.getOffense(league, team.team_id, {}, { signal: s }));
-  const def = useApi(`def:${team.team_id}`, (s) => api.getDefense(league, team.team_id, {}, { signal: s }));
+function TeamPanel({ league, team, side, scope }) {
+  const off = useApi(`off:${team.team_id}:${scope}`,
+    (s) => api.getOffense(league, team.team_id, { scope }, { signal: s }));
+  const def = useApi(`def:${team.team_id}:${scope}`,
+    (s) => api.getDefense(league, team.team_id, { scope }, { signal: s }));
 
   const body = () => {
     if (off.loading || def.loading) return <div className="card-pad"><Loading rows={2} height={54} /></div>;
@@ -194,8 +222,23 @@ function TeamPanel({ league, team, side }) {
     }
     const o = off.data, d = def.data;
     const of_ = o?.teams_ranked || d?.teams_ranked;
+    const basis = o || d;
     return (
       <div className="card-pad col" style={{ gap: 16 }}>
+        {basis?.fell_back && (
+          <Notice icon={Icon.Clock}>
+            No {basis.current_season} games played yet — showing{' '}
+            <strong>{basis.seasons?.join(', ')}</strong> instead. This season's card
+            appears as soon as the first game is ingested.
+          </Notice>
+        )}
+        {basis && !basis.fell_back && basis.basis === 'current' && (
+          <div className="tiny muted">
+            {basis.current_season} only · {basis.games_played} game
+            {basis.games_played === 1 ? '' : 's'} played
+            {basis.games_played < 4 ? ' — a small sample, read it as a direction' : ''}
+          </div>
+        )}
         {o && (
           <div className="col" style={{ gap: 10 }}>
             <div className="eyebrow">Offense</div>
@@ -243,94 +286,109 @@ function TeamPanel({ league, team, side }) {
   );
 }
 
-function OddsBoard({ board, home, away }) {
-  const books = board.books || [];
+/* ── Coaching & tendencies ────────────────────────────────────────────────────
+   Behaviour rather than results. Pace and drive outcomes describe how a team plays
+   regardless of who it has played, which is the read that survives a week-one slate
+   where nobody has a current-season record yet. NCAAF adds the coach, because in
+   college the portable signal belongs to him and not to the roster.
+── */
 
-  // Line movement: first and latest snapshot per (book, market, outcome). Opening
-  // price is where the book started, not a consensus open.
-  const moves = useMemo(() => {
-    const seen = new Map();
-    for (const m of board.movement || []) {
-      const k = `${m.bookmaker}|${m.market_key}|${m.outcome}`;
-      if (!seen.has(k)) seen.set(k, { first: m, last: m, n: 1 });
-      else { const e = seen.get(k); e.last = m; e.n += 1; }
+function TendencyPanel({ league, team }) {
+  const pace = useApi(`pace:${team.team_id}`,
+    (s) => api.getPace(league, { team_id: team.team_id }, { signal: s }));
+  const drives = useApi(`drives:${team.team_id}`,
+    (s) => api.getDriveOutcomes(league, { team_id: team.team_id }, { signal: s }));
+  const coach = useApi(
+    league === 'ncaaf' ? `coaching:${team.team_id}` : null,
+    (s) => api.getCoaching(team.team_id, {}, { signal: s }),
+  );
+
+  // Neutral-ish script: how the team plays when the game is not already decided.
+  const neutral = (pace.data?.cells || []).find((c) => c.score_state === 'tied')
+    || (pace.data?.cells || [])[0];
+
+  // The single most over-indexed drive result, versus the league in the same field
+  // position bucket — one honest sentence about how drives end.
+  const signature = (() => {
+    let best = null;
+    for (const b of drives.data?.buckets || []) {
+      for (const r of b.results || []) {
+        if ((b.team_drives || 0) < 25) continue;
+        if (!best || Math.abs(r.delta_vs_league) > Math.abs(best.delta)) {
+          best = { bucket: b.bucket, result: r.result, delta: r.delta_vs_league,
+                   rate: r.team_rate, league: r.league_rate, n: b.team_drives };
+        }
+      }
     }
-    return seen;
-  }, [board.movement]);
-
-  if (!books.length) {
-    return <Card><Empty icon={Icon.Odds} title="No prices stored"
-      body="No bookmaker has been polled for this game yet. Run the odds poller to populate it." /></Card>;
-  }
-
-  const drift = (book, market, outcome) => {
-    const e = moves.get(`${book}|${market}|${outcome}`);
-    if (!e || e.n < 2) return null;
-    const a = e.first.line ?? e.first.price_american;
-    const b = e.last.line ?? e.last.price_american;
-    if (a == null || b == null || a === b) return null;
-    return b - a;
-  };
+    return best;
+  })();
 
   return (
     <Card>
-      <div className="table-scroll">
-        <table className="data">
-          <thead>
-            <tr>
-              <th>Book</th>
-              <th>{away.abbr} spread</th>
-              <th>{home.abbr} spread</th>
-              <th>Total</th>
-              <th>{away.abbr} ML</th>
-              <th>{home.abbr} ML</th>
-              <th>Fair {away.abbr}</th>
-              <th>Updated</th>
-            </tr>
-          </thead>
-          <tbody>
-            {books.map((b) => {
-              const d = drift(b.bookmaker, 'spreads', home.name);
-              return (
-                <tr key={b.bookmaker}>
-                  <td>
-                    <span className="row" style={{ gap: 6 }}>
-                      <span className={`pulse-dot ${b.is_live_book ? 'live' : ''}`}
-                        style={!b.is_live_book ? { background: 'var(--text-faint)' } : undefined} />
-                      {b.bookmaker}
-                      {!b.is_live_book && <span className="badge warn">archive</span>}
-                    </span>
-                  </td>
-                  <td className="num">
-                    {spread(b.spread?.away?.line)}
-                    <span className="muted"> {american(b.spread?.away?.price_american)}</span>
-                  </td>
-                  <td className="num">
-                    {spread(b.spread?.home?.line)}
-                    <span className="muted"> {american(b.spread?.home?.price_american)}</span>
-                    {d != null && (
-                      <span className={d < 0 ? ' good' : ' bad'} title="Movement since this book opened">
-                        {' '}{d > 0 ? '↑' : '↓'}{Math.abs(d).toFixed(1)}
-                      </span>
-                    )}
-                  </td>
-                  <td className="num">
-                    {b.total?.over?.line ?? '—'}
-                    <span className="muted"> {american(b.total?.over?.price_american)}</span>
-                  </td>
-                  <td className="num">{american(b.moneyline?.away?.price_american)}</td>
-                  <td className="num">{american(b.moneyline?.home?.price_american)}</td>
-                  <td className="num accent">{pct(b.moneyline?.away?.fair_prob)}</td>
-                  <td className="num muted">{relativeTime(b.captured_at)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
-      <div className="card-pad tiny muted" style={{ borderTop: '1px solid var(--border-soft)' }}>
-        {board.movement?.length || 0} snapshots stored for this game. Arrows show how each
-        book's home spread has moved since its first snapshot.
+      <CardHead title={team.name} sub="Tendencies" icon={Icon.Grid} />
+      <div className="card-pad col" style={{ gap: 14 }}>
+        {league === 'ncaaf' && (
+          coach.loading ? <Loading rows={1} height={44} />
+          : coach.data ? (
+            <div className="col" style={{ gap: 6 }}>
+              <div className="eyebrow">Coach</div>
+              <div className="row" style={{ gap: 8 }}>
+                <Link to={`/coaches/${encodeURIComponent(coach.data.coach_id)}`}
+                  className="accent" style={{ fontWeight: 700 }}>{coach.data.name}</Link>
+                {coach.data.is_first_year_at_school && <Badge tone="accent">First year</Badge>}
+                <span style={{ flex: 1 }} />
+                <span className="tiny muted">Yr {coach.data.tenure_year ?? '—'}</span>
+              </div>
+              <div className="row wrap" style={{ gap: 16 }}>
+                <Stat label="Career SP+ residual" value={signed(coach.data.career_sp_residual, 1)}
+                  size="sm" sub="vs talent baseline" />
+                <Stat label="Seasons of history" value={coach.data.seasons_of_history} size="sm"
+                  sub={coach.data.seasons_of_history < 4 ? 'short — uncertain' : null} />
+              </div>
+            </div>
+          ) : null
+        )}
+
+        {pace.loading && <Loading rows={1} height={44} />}
+        {neutral && (
+          <div className="col" style={{ gap: 6 }}>
+            <div className="eyebrow">Pace · game tied</div>
+            <div className="row wrap" style={{ gap: 16 }}>
+              <Stat label="Sec / play" value={num(neutral.team_sec_per_play, 1)} size="sm"
+                sub={`league ${num(neutral.league_sec_per_play, 1)}`} />
+              <Stat label="Plays / drive" value={num(neutral.team_plays_per_drive, 2)} size="sm"
+                sub={`league ${num(neutral.league_plays_per_drive, 2)}`} />
+              <Stat label="Drives" value={neutral.team_drives} size="sm" />
+            </div>
+          </div>
+        )}
+
+        {drives.loading && <Loading rows={1} height={44} />}
+        {signature && (
+          <div className="col" style={{ gap: 4 }}>
+            <div className="eyebrow">Drive signature</div>
+            <div className="small secondary" style={{ lineHeight: 1.55 }}>
+              From <strong>{signature.bucket.replace(/_/g, ' ')}</strong>, drives end in{' '}
+              <strong>{signature.result.toLowerCase().replace(/_/g, ' ')}</strong>{' '}
+              {pct(signature.rate, 0)} of the time — against a league rate of{' '}
+              {pct(signature.league, 0)}.
+            </div>
+            <div className="row tiny" style={{ gap: 7 }}>
+              <span style={{ color: signature.delta > 0 ? 'var(--good)' : 'var(--bad)' }}>
+                {signed(signature.delta * 100, 1)} points vs league
+              </span>
+              <span className="muted">· {signature.n} drives</span>
+              {/* Same rule as everywhere else here: the rate never travels without the
+                  count, and a thin one is called thin rather than left to be noticed. */}
+              {signature.n < 60 && <Badge tone="warn">thin sample</Badge>}
+            </div>
+          </div>
+        )}
+
+        {!pace.loading && !neutral && !signature && (
+          <Empty icon={Icon.Grid} title="No tendency data"
+            body="This team has no drives loaded for the default seasons." />
+        )}
       </div>
     </Card>
   );

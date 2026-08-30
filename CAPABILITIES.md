@@ -164,9 +164,10 @@ would otherwise pad the field to 237 and flatter every rank.
 | Endpoint | AI context |
 |---|---|
 | `GET /teams` | Every team in the league. NCAAF defaults to FBS — the 105 FCS teams have no odds and no context rows. |
-| `GET /games` | The slate. Filter by `season`/`week`/`status`/`team_id`, or `upcoming=true`. Each game carries teams, per-game conditions, and the best book's current price line. |
+| `GET /games` | The slate. Filter by `season`/`week`/`status`/`team_id`, `upcoming=true`, or a `kickoff_from`/`kickoff_to` instant window. Each game carries teams, per-game conditions, and the best book's current price line. |
 | `GET /games/{game_id}` | One matchup with every book that quotes it. |
-| `GET /games/{game_id}/odds` | Full board plus the snapshot time series — line movement, which is CLV's raw material. |
+| `GET /games/{game_id}/odds` | Full board plus the snapshot time series. `sections` splits the non-featured game-level markets into alternates, period markets and team totals; `prop_market_keys` counts the props without expanding them. |
+| `GET /games/{game_id}/props` | Player props grouped by **subject** rather than by market — a prop board keyed by market makes you hunt one player across six tables. Over/under markets carry a line and two sides; anytime-touchdown carries only a price on "Yes", so shape follows market. `player_id` is null for D/ST entries, which keep `side_team_id` and are labelled rather than dropped. Books disagree on the line, so the line is part of the key: over 249.5 and over 264.5 are different bets. |
 
 Outcome strings are resolved to a side through the **`cfbd_alias` crosswalk**, not by
 comparing names: The Odds API writes `North Carolina Tar Heels` where `teams.name` is
@@ -174,10 +175,52 @@ comparing names: The Odds API writes `North Carolina Tar Heels` where `teams.nam
 while leaving Over/Under intact. An outcome that resolves to neither team is omitted
 rather than guessed at.
 
+`kickoff_from`/`kickoff_to` take ISO instants rather than a date, deliberately. "Games
+from today" is a question about the *caller's* day, and a Saturday-night college kickoff
+is already Sunday in UTC — so the client sends its own local midnight boundaries and the
+server never has to guess at a timezone.
+
 Books are split into **live** (`draftkings`, `fanduel`, `betmgm`, `caesars`, `pinnacle`)
 and **archive** (`cfbd:*`, `nflverse:closing`). Archives are correct for backtests and
 wrong as "the current line", so they are only consulted when no live book has the game,
 and every response flags which kind it returned via `is_live_book`.
+
+### Live scoreboard — `/api/nfl/live` · `/api/ncaaf/live`
+
+| Endpoint | AI context |
+|---|---|
+| `GET /live?date=YYYY-MM-DD` | Scores, game clock, down & distance, possession, last play, per-quarter linescores, and ESPN's game leaders. |
+
+**The only surface here that is not database-backed.** In-game state has no home in our
+schema — `games` stores a final score and a status, not a play clock — so this reads the
+public scoreboard on request with a 12-second TTL. `fetched_at` and `age_seconds` ship in
+every response, and a failed upstream call is a 502 rather than a silently re-served
+stale payload.
+
+Two things the ingest layer should not relearn the hard way:
+
+- **Do not set a browser User-Agent.** The upstream WAF allows recognised programmatic
+  clients (httpx's and curl's defaults both pass) and returns 403 for anything claiming
+  to be a browser, because the TLS fingerprint contradicts the claim. Verified across
+  Chrome 58, Chrome 124 and Safari 17 strings, and for an unrecognised custom agent.
+- **`down: 0` and `down: -1` are sentinels**, not downs — a timeout, kickoff, or extra
+  point. They are normalised to null so nothing renders "0th & 7".
+
+Live events map onto canonical ids: NCAAF for free (our `ncaaf:<id>` *is* the ESPN event
+id, and `ncaaf:24` is its team id), NFL by kickoff date plus both team abbreviations,
+with `WSH`→`WAS` and `LAR`→`LA` the only two that disagree.
+
+### Season scope — `offense` / `defense`
+
+`scope=current` returns this season and **falls back to 2023–2025 when the team has not
+played**, reporting `basis`, `games_played`, `current_season` and `fell_back` so the
+caller always knows which it got. Week one is the case that matters: an empty card is
+useless, and a silent substitution is worse. `scope` defaults to `explicit`, so existing
+callers are unaffected.
+
+The current season is read from the newest season in `games`, not from the calendar — a
+date rule would encode where each league's year turns over and be wrong whenever a
+schedule loads early.
 
 ### Coverage — `/api/football/*`
 

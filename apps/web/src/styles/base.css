@@ -50,7 +50,16 @@ button:disabled { cursor: not-allowed; }
 .eyebrow {
   font-size: 10.5px; font-weight: 700; letter-spacing: 0.1em;
   text-transform: uppercase; color: var(--text-muted);
+  display: inline-flex; align-items: center; gap: 7px;
 }
+/* A short accent rule before every section label. Repeated often enough to carry the
+   theme's colour down the page, small enough that it never competes with the data. */
+.eyebrow::before {
+  content: ''; width: 10px; height: 2px; border-radius: 1px;
+  background: var(--accent); opacity: 0.75; flex-shrink: 0;
+}
+/* Opt out where the label is inline inside a dense cell rather than heading a block. */
+.eyebrow.bare::before { display: none; }
 .muted { color: var(--text-muted); }
 .secondary { color: var(--text-secondary); }
 .tiny { font-size: 11px; }

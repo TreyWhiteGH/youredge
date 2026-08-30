@@ -132,10 +132,21 @@ paywalled — not that the game was calm or indoors. Absent values render as an 
 than shown empty. `rz_td_rate` is null for NCAAF because `touchdown` is nflverse-only, and
 the tile says so on hover instead of showing 0%.
 
-### One colour scale
+### One colour scale, and it is not the accent
 
 `scaleColor` maps a league percentile to a hue and is the only thing that colours a rank.
-Green means the same on a team card, a unit grade and a protection row.
+It reads from five dedicated tokens — `--rank-best` through `--rank-worst` — and
+deliberately **not** from `--accent`.
+
+That separation is load-bearing rather than tidy. The ramp used to borrow `--accent` for
+its second band, which was fine while every theme's accent was blue. The moment the light
+theme took a green accent, `--good` and `--accent` were the same hue and a five-step scale
+rendered as four, silently. Ranks and chrome are different jobs and no longer share a
+variable.
+
+For the same reason `--good` is teal in the light theme: a positive delta sits next to a
+link often enough — in the compare table they are adjacent columns — that they must not be
+the same green.
 
 The pass-rate heatmap is the single deliberate exception — there the two colours mean
 *direction* (passes more / runs more), not quality — so it carries an explicit legend

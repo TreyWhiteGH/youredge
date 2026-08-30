@@ -8,6 +8,7 @@ import React from 'react';
 import { Link } from 'react-router-dom';
 import Icon from '../icons';
 import { american, kickoffFull, kickoffTime, leagueOf, relativeTime, shortLabel, spread } from '../lib/format';
+import TeamMark, { teamColor } from './TeamMark';
 
 function OddsStrip({ odds, home, away }) {
   if (!odds) {
@@ -61,7 +62,8 @@ function OddsStrip({ odds, home, away }) {
 function TeamRow({ team, dim, showScore }) {
   const code = team.abbr && team.abbr !== team.name && team.abbr.length <= 5 ? team.abbr : null;
   return (
-    <div className={`game-team${dim ? ' loser' : ''}`}>
+    <div className={`game-team${dim ? ' loser' : ''}`} style={{ '--tm-color': teamColor(team) }}>
+      <TeamMark team={team} size={22} />
       {code && <span className="abbr num">{code}</span>}
       {/* The rank the team carried into this game, so a past result keeps the matchup
           it actually was rather than being relabelled by today's poll. */}

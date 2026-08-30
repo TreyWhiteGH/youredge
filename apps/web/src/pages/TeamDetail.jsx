@@ -20,6 +20,7 @@ import {
   Section, Stat, StatTile, StarButton, Tip,
 } from '../components/ui';
 import GameCard from '../components/GameCard';
+import TeamMark from '../components/TeamMark';
 
 const NFL_TABS = [
   { id: 'units', label: 'Units', icon: Icon.Shield },
@@ -62,13 +63,12 @@ export default function TeamDetail() {
         <div style={{ minWidth: 0 }}>
           <div className="eyebrow">{league.toUpperCase()}{meta?.classification ? ` · ${meta.classification.toUpperCase()}` : ''}</div>
           <h1 style={{ marginTop: 4 }} className="row">
+            {meta && <TeamMark team={meta} size={34} />}
             {meta?.rank ? (
               <span className="rank-chip lg num" title={`${poll} — ${meta.points} points`}>
                 {meta.rank}
               </span>
-            ) : (
-              <span className="accent" style={{ display: 'grid' }}><Icon.Shield size={22} /></span>
-            )}
+            ) : null}
             {name}
           </h1>
           <div className="sub row" style={{ gap: 8 }}>

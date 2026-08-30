@@ -10,6 +10,7 @@ const GROUPS = [
       [['?'], 'This sheet'],
       [['L'], 'Flip league'],
       [['T'], 'Flip theme'],
+      [['M'], 'Team logos on / off'],
       [['esc'], 'Close'],
     ],
   },

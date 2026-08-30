@@ -16,6 +16,7 @@ import { useApi } from '../lib/hooks';
 import { useApp } from '../lib/store';
 import { dayLabel, dayPhrase, isToday, kickoffTime, localDay, shiftDay } from '../lib/format';
 import { Card, Empty, ErrorState, Loading, Notice, Section } from '../components/ui';
+import TeamMark, { teamColor } from '../components/TeamMark';
 
 // Polled only while something is actually being played. A settled slate does not need
 // to be re-fetched every twenty seconds, and the engine caches it for two minutes anyway.
@@ -228,8 +229,9 @@ function LiveTeamRow({ team, hasBall, game }) {
   const final = game.state === 'post';
   const lost = final && team.winner === false;
   return (
-    <div className={`game-team${lost ? ' loser' : ''}`}>
+    <div className={`game-team${lost ? ' loser' : ''}`} style={{ '--tm-color': teamColor(team) }}>
       <span className="poss">{hasBall ? <Icon.Football size={12} /> : null}</span>
+      <TeamMark team={team} size={22} />
       {team.rank && <span className="rk num">{team.rank}</span>}
       <span className="nm truncate">{team.name}</span>
       {team.record && <span className="tiny muted rec">{team.record}</span>}

@@ -158,3 +158,7 @@ diagnose:
 # silently capped every Layer B table at the 2023-25 games.
 backfill-nfl-lines:
 	docker compose run --rm ingest python -m youredge.ingest.nfl_lines --seasons 2016 2017 2018 2019 2020 2021 2022
+
+# AP / Coaches / CFP committee polls, week by week.
+ingest-rankings:
+	docker compose run --rm ingest python -m youredge.ingest.cfbd_rankings --seasons 2024 2025 2026

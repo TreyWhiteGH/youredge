@@ -61,6 +61,15 @@ truncates college names to `S JOSE ST`) plus jersey-validated player matching. U
 then, `data/pff/ncaa/` files are skipped with an explicit error.
 
 **PFF facets loaded (NFL):** `passing`, `passing_depth`, `passing_pressure`, `passing_concept`, `time_in_pocket`, `allowed_pressure`, `receiving`, `receiving_depth`, `receiving_concept`, `receiving_scheme`, `rushing`, `blocking`, `pass_blocking`, `run_blocking`, `defense`, `pass_rush`, `run_defense`, `coverage`, `coverage_scheme`, `slot_coverage`, `prp`, `field_goals`.
+**Poll rank is not SP+ rank.** `team_rankings` holds the AP, Coaches and CFP committee
+polls week by week; `team_season_context.sp_ranking` is a rating system's ordering. They
+disagree often, and a "Top 25" built from SP+ would contain teams no voter has ranked —
+so the ranked filter and every rank badge read from the poll. CFBD keys ranked teams by
+the same numeric id our `ncaaf:` ids are built from, so the join is exact (1,951 rows
+across 2024–2026, zero unresolved). FCS and Division II/III polls are skipped **by name
+rather than by pattern**, so a new poll is reported as ignored instead of quietly
+entering an FBS Top 25.
+
 ### NCAAF context (coaching & roster experience)
 
 | Table | Rows | What it is |
@@ -151,6 +160,7 @@ their league, so `/api/nfl/teams/ncaaf:59` returns **400** rather than an empty 
 
 | Endpoint | AI context |
 |---|---|
+| `GET /rankings?poll=&season=&week=` | One poll, one week, in order, with `movement` against the previous week (positive = climbing). Defaults to the newest week of the AP Top 25. |
 | `GET /coaches?q=` · `/coaches/{id}` | Coach search and **full career across every school** — the portable-signal view |
 | `GET /teams/{id}/coaching` | Current coach, tenure, `arrived_this_season`, career residual |
 | `GET /teams/{id}/context` | Returning production **with league percentile**, talent, recruiting, SP+, portal counts |
@@ -163,8 +173,8 @@ would otherwise pad the field to 237 and flatter every rank.
 
 | Endpoint | AI context |
 |---|---|
-| `GET /teams` | Every team in the league. NCAAF defaults to FBS — the 105 FCS teams have no odds and no context rows. |
-| `GET /games` | The slate. Filter by `season`/`week`/`status`/`team_id`, `upcoming=true`, or a `kickoff_from`/`kickoff_to` instant window. Each game carries teams, per-game conditions, and the best book's current price line. |
+| `GET /teams` | Every team in the league, carrying its current poll `rank`. NCAAF defaults to FBS — the 105 FCS teams have no odds and no context rows. `ranked=true` returns only the Top 25. |
+| `GET /games` | The slate. Filter by `season`/`week`/`status`/`team_id`, `upcoming=true`, or a `kickoff_from`/`kickoff_to` instant window. Each game carries teams, per-game conditions, the best book's current price line, and each side's **poll rank as of that game's week** — not today's poll, so a past result keeps the matchup it actually was. |
 | `GET /games/{game_id}` | One matchup with every book that quotes it. |
 | `GET /games/{game_id}/odds` | Full board plus the snapshot time series. `sections` splits the non-featured game-level markets into alternates, period markets and team totals; `prop_market_keys` counts the props without expanding them. |
 | `GET /games/{game_id}/props` | Player props grouped by **subject** rather than by market — a prop board keyed by market makes you hunt one player across six tables. Over/under markets carry a line and two sides; anytime-touchdown carries only a price on "Yes", so shape follows market. `player_id` is null for D/ST entries, which keep `side_team_id` and are labelled rather than dropped. Books disagree on the line, so the line is part of the key: over 249.5 and over 264.5 are different bets. |

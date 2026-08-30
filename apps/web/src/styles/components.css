@@ -492,7 +492,10 @@ table.data tbody tr:last-child td { border-bottom: none; }
 
 .game-team .poss { width: 14px; flex-shrink: 0; display: grid; place-items: center;
   color: var(--warn); }
-.game-team .rk { font-size: 10px; font-weight: 700; color: var(--warn); flex-shrink: 0; }
+/* Poll rank. Prefixed with a hash so a lone "3" beside a school name cannot be
+   mistaken for a score or a seed. */
+.game-team .rk { font-size: 10.5px; font-weight: 750; color: var(--warn); flex-shrink: 0; }
+.game-team .rk::before { content: '#'; opacity: 0.65; }
 .game-team .rec { flex-shrink: 0; }
 
 .situation {
@@ -545,3 +548,13 @@ table.data.linescore tbody tr:hover { background: none; }
   font-size: 9px; font-weight: 750; letter-spacing: 0.06em;
   text-transform: uppercase; color: var(--text-faint);
 }
+
+/* ── Poll rank ──────────────────────────────────────────────────────────────── */
+
+.rank-chip {
+  width: 26px; height: 26px; flex-shrink: 0;
+  display: grid; place-items: center; border-radius: var(--r-sm);
+  background: var(--warn-wash); color: var(--warn);
+  font-size: 12px; font-weight: 800; letter-spacing: -0.03em;
+}
+.rank-chip.lg { width: 32px; height: 32px; font-size: 14px; }

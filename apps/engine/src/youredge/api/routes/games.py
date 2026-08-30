@@ -53,26 +53,131 @@ def _league(request: Request) -> str:
     return request.url.path.split("/")[2]
 
 
+# Rankings are a college thing. The join is written to be a no-op for the NFL rather
+# than branching the query, so `rank` is simply null there.
+DEFAULT_POLL = "AP Top 25"
+
+
 @router.get("/teams")
-async def list_teams(request: Request, classification: str | None = Query(default=None)):
-    """Every team in the league. NCAAF defaults to FBS only — the 105 FCS teams have no
-    odds and no context rows, so listing them makes the picker worse, not more complete."""
+async def list_teams(
+    request: Request,
+    classification: str | None = Query(default=None),
+    poll: str = Query(default=DEFAULT_POLL, description="NCAAF poll to rank by"),
+    season: int | None = Query(default=None, description="defaults to the newest polled season"),
+    ranked: bool = Query(default=False, description="only teams in the current poll"),
+):
+    """Every team in the league, carrying its current poll rank where one exists.
+
+    NCAAF defaults to FBS only — the 105 FCS teams have no odds and no context rows, so
+    listing them makes the picker worse, not more complete.
+
+    `rank` is the team's place in the most recent week of `poll`, not its SP+ ordering.
+    The two disagree often, and a Top 25 built from a rating system would contain teams
+    no voter has ranked.
+    """
     league = _league(request)
     if league == "ncaaf" and classification is None:
         classification = "fbs"
     async with get_engine().connect() as conn:
         rows = (await conn.execute(
             text("""
-                SELECT team_id, abbr, name, classification
-                FROM teams
-                WHERE league = :league
-                  AND (CAST(:cls AS text) IS NULL OR classification = :cls)
-                ORDER BY name
+                WITH latest AS (
+                    SELECT season, max(week) AS week FROM team_rankings
+                    WHERE poll = :poll
+                      AND (CAST(:season AS int) IS NULL OR season = :season)
+                    GROUP BY season ORDER BY season DESC LIMIT 1
+                )
+                SELECT t.team_id, t.abbr, t.name, t.classification,
+                       r.rank, r.points, r.first_place_votes,
+                       l.season AS rank_season, l.week AS rank_week
+                FROM teams t
+                LEFT JOIN latest l ON true
+                LEFT JOIN team_rankings r
+                       ON r.team_id = t.team_id AND r.poll = :poll
+                      AND r.season = l.season AND r.week = l.week
+                WHERE t.league = :league
+                  AND (CAST(:cls AS text) IS NULL OR t.classification = :cls)
+                  AND (NOT :ranked OR r.rank IS NOT NULL)
+                ORDER BY t.name
             """),
-            {"league": league, "cls": classification},
+            {"league": league, "cls": classification, "poll": poll,
+             "season": season, "ranked": ranked},
         )).mappings().all()
-    return {"league": league, "count": len(rows), "teams": [dict(r) for r in rows]}
+    out = [dict(r) for r in rows]
+    return {
+        "league": league,
+        "poll": poll if any(r["rank"] for r in out) else None,
+        "rank_season": out[0]["rank_season"] if out else None,
+        "rank_week": out[0]["rank_week"] if out else None,
+        "count": len(out),
+        "ranked_count": sum(1 for r in out if r["rank"]),
+        "teams": out,
+    }
 
+
+@router.get("/rankings")
+async def rankings(
+    request: Request,
+    poll: str = Query(default=DEFAULT_POLL),
+    season: int | None = Query(default=None),
+    week: int | None = Query(default=None, description="defaults to the newest week"),
+):
+    """One poll, one week, in order. Movement is the change from the previous week."""
+    league = _league(request)
+    if league != "ncaaf":
+        raise HTTPException(status_code=404, detail="polls are an NCAAF surface")
+    async with get_engine().connect() as conn:
+        target = (await conn.execute(
+            text("""
+                SELECT season, week FROM team_rankings
+                WHERE poll = :poll
+                  AND (CAST(:season AS int) IS NULL OR season = :season)
+                  AND (CAST(:week AS int) IS NULL OR week = :week)
+                ORDER BY season DESC, week DESC LIMIT 1
+            """),
+            {"poll": poll, "season": season, "week": week},
+        )).mappings().first()
+        if target is None:
+            raise HTTPException(status_code=404, detail=f"no rows for poll {poll!r}")
+
+        rows = (await conn.execute(
+            text("""
+                SELECT r.rank, r.points, r.first_place_votes, r.team_id,
+                       t.name, t.abbr, prev.rank AS previous_rank
+                FROM team_rankings r
+                JOIN teams t USING (team_id)
+                LEFT JOIN team_rankings prev
+                       ON prev.team_id = r.team_id AND prev.poll = r.poll
+                      AND prev.season = r.season AND prev.week = r.week - 1
+                WHERE r.poll = :poll AND r.season = :season AND r.week = :week
+                ORDER BY r.rank
+            """),
+            {"poll": poll, "season": target["season"], "week": target["week"]},
+        )).mappings().all()
+
+    out = []
+    for r in rows:
+        d = dict(r)
+        # Positive means climbing: 12th to 7th is +5, which is how a poll is read.
+        d["movement"] = (r["previous_rank"] - r["rank"]) if r["previous_rank"] else None
+        out.append(d)
+    return {"poll": poll, "season": target["season"], "week": target["week"],
+            "count": len(out), "rankings": out}
+
+
+# The poll a team carried *into* a game, not today's poll. CFBD's week 1 is the
+# preseason ballot, so the ranking in effect for a week-N game is the newest poll at or
+# before week N — showing a November ranking on an September result would rewrite what
+# the matchup actually was. Future weeks have no poll of their own yet, so they inherit
+# the latest published one, which is exactly what a scoreboard should show.
+_RANK_AT = """
+    LEFT JOIN LATERAL (
+        SELECT r.rank FROM team_rankings r
+        WHERE r.team_id = {team}.team_id AND r.poll = :poll
+          AND r.season = g.season AND r.week <= COALESCE(g.week, 99)
+        ORDER BY r.week DESC LIMIT 1
+    ) {alias} ON true
+"""
 
 _GAMES_SQL = """
     SELECT g.game_id, g.season, g.week, g.season_type, g.kickoff, g.status,
@@ -80,11 +185,13 @@ _GAMES_SQL = """
            g.temp, g.wind, g.notes,
            h.team_id AS home_id, h.abbr AS home_abbr, h.name AS home_name,
            a.team_id AS away_id, a.abbr AS away_abbr, a.name AS away_name,
+           hr.rank AS home_rank, ar.rank AS away_rank,
            v.name AS venue_name, v.city AS venue_city, v.state AS venue_state,
            v.elevation AS venue_elevation, v.dome AS venue_dome
     FROM games g
     JOIN teams h ON h.team_id = g.home_team_id
     JOIN teams a ON a.team_id = g.away_team_id
+    """ + _RANK_AT.format(team="h", alias="hr") + _RANK_AT.format(team="a", alias="ar") + """
     LEFT JOIN venues v ON v.venue_id = g.venue_id
     WHERE g.league = :league
       AND (CAST(:season AS int) IS NULL OR g.season = :season)
@@ -214,13 +321,14 @@ async def list_games(
     order: str = Query(default="asc", pattern="^(asc|desc)$"),
     limit: int = Query(default=100, le=400),
     odds: bool = Query(default=True, description="attach the best-book price line"),
+    poll: str = Query(default=DEFAULT_POLL, description="NCAAF poll for team ranks"),
 ):
     league = _league(request)
     sql = text(_GAMES_SQL.format(order="ASC" if order == "asc" else "DESC"))
     async with get_engine().connect() as conn:
         rows = (await conn.execute(sql, {
             "league": league, "season": season, "week": week, "status": status,
-            "team": team_id, "upcoming": upcoming, "lim": limit,
+            "team": team_id, "upcoming": upcoming, "lim": limit, "poll": poll,
             "ko_from": _instant(kickoff_from, "kickoff_from"),
             "ko_to": _instant(kickoff_to, "kickoff_to"),
             "now": datetime.now(timezone.utc),
@@ -259,9 +367,11 @@ def _game_shape(r: dict) -> dict:
         "notes": r["notes"],
         "neutral_site": r["neutral_site"],
         "home": {"team_id": r["home_id"], "abbr": r["home_abbr"],
-                 "name": r["home_name"], "score": r["home_score"]},
+                 "name": r["home_name"], "score": r["home_score"],
+                 "rank": r["home_rank"]},
         "away": {"team_id": r["away_id"], "abbr": r["away_abbr"],
-                 "name": r["away_name"], "score": r["away_score"]},
+                 "name": r["away_name"], "score": r["away_score"],
+                 "rank": r["away_rank"]},
         # roof/surface/temp/wind are per game, not per venue: retractable roofs open and
         # a neutral-site game isn't played on the home surface. NULL temp means "not
         # reported" (CFBD's weather is paywalled) — never "indoors" or "calm".
@@ -282,7 +392,8 @@ async def game_detail(request: Request, game_id: str):
             text(_GAMES_SQL.format(order="ASC").replace(
                 "AND (NOT :upcoming OR g.kickoff >= :now)", "AND g.game_id = :gid")),
             {"league": league, "season": None, "week": None, "status": None,
-             "team": None, "lim": 1, "gid": game_id, "ko_from": None, "ko_to": None},
+             "team": None, "lim": 1, "gid": game_id, "ko_from": None, "ko_to": None,
+             "poll": DEFAULT_POLL},
         )).mappings().first()
         if row is None:
             raise HTTPException(status_code=404, detail=f"unknown game_id {game_id}")

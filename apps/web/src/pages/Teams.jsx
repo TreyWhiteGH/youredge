@@ -3,7 +3,7 @@
    carry no odds and no context rows — listing them makes the picker worse.
 ── */
 
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Icon from '../icons';
 import * as api from '../lib/api';
@@ -14,17 +14,33 @@ import { Card, Empty, ErrorState, Loading, StarButton } from '../components/ui';
 export default function Teams() {
   const { league, isWatched, toggleWatch, compare, toggleCompare, inCompare } = useApp();
   const [q, setQ] = useState('');
+  const [rankedOnly, setRankedOnly] = useState(false);
 
   const { data, loading, error, refetch } = useApi(
     `teams:${league}`, (s) => api.listTeams(league, {}, { signal: s }), { ttl: 6e5 });
 
+  // The poll only exists for college; flipping to the NFL drops the filter rather than
+  // leaving a control that would silently match nothing.
+  const hasPoll = (data?.ranked_count || 0) > 0;
+  useEffect(() => { if (!hasPoll) setRankedOnly(false); }, [hasPoll]);
+
   const teams = useMemo(() => {
     const needle = q.trim().toLowerCase();
-    const all = data?.teams || [];
-    if (!needle) return all;
-    return all.filter((t) =>
-      t.name.toLowerCase().includes(needle) || t.abbr?.toLowerCase().includes(needle));
-  }, [data, q]);
+    let all = data?.teams || [];
+    if (rankedOnly) all = all.filter((t) => t.rank);
+    if (needle) {
+      all = all.filter((t) =>
+        t.name.toLowerCase().includes(needle) || t.abbr?.toLowerCase().includes(needle));
+    }
+    // Ranked teams lead, in poll order — a Top 25 list sorted alphabetically is not a
+    // Top 25. Everyone else keeps the alphabetical order the API returned.
+    return [...all].sort((a, b) => {
+      if (a.rank && b.rank) return a.rank - b.rank;
+      if (a.rank) return -1;
+      if (b.rank) return 1;
+      return 0;
+    });
+  }, [data, q, rankedOnly]);
 
   return (
     <>
@@ -32,11 +48,22 @@ export default function Teams() {
         <div>
           <h1>{league === 'nfl' ? 'NFL' : 'FBS'} teams</h1>
           <div className="sub">
-            {data ? `${data.count} teams` : 'Loading'} · open one for unit cards, grades and tendencies
+            {data ? `${teams.length} of ${data.count} teams` : 'Loading'}
+            {hasPoll && data.rank_week != null && (
+              <> · {data.poll}, {data.rank_season} week {data.rank_week}</>
+            )}
           </div>
         </div>
         <div className="spacer" />
-        <input className="input" style={{ maxWidth: 240 }} value={q}
+        {hasPoll && (
+          <button className="chip" aria-pressed={rankedOnly}
+            onClick={() => setRankedOnly((v) => !v)}
+            title={`Show only the ${data.poll}`}>
+            <Icon.Trophy size={13} /> Top 25
+            <span className="tiny muted num">{data.ranked_count}</span>
+          </button>
+        )}
+        <input className="input" style={{ maxWidth: 220 }} value={q}
           onChange={(e) => setQ(e.target.value)} placeholder="Filter teams…" />
       </div>
 
@@ -55,7 +82,11 @@ export default function Teams() {
 
       {!loading && !error && teams.length === 0 && (
         <Card><Empty icon={Icon.Teams} title="No teams match"
-          body={`Nothing in ${league.toUpperCase()} matches "${q}".`} /></Card>
+          body={rankedOnly && q
+            ? `No ranked team matches "${q}".`
+            : rankedOnly
+              ? 'No poll is loaded for this league.'
+              : `Nothing in ${league.toUpperCase()} matches "${q}".`} /></Card>
       )}
 
       <div className="grid grid-auto stagger">
@@ -65,7 +96,13 @@ export default function Teams() {
           return (
             <Card key={t.team_id} className="card-pad row" style={{ gap: 12 }}>
               <Link to={to} className="row" style={{ gap: 11, flex: 1, minWidth: 0 }}>
-                <span className="accent" style={{ display: 'grid' }}><Icon.Shield size={19} /></span>
+                {t.rank ? (
+                  <span className="rank-chip num" title={`${data.poll} — ${t.points} points`}>
+                    {t.rank}
+                  </span>
+                ) : (
+                  <span className="accent" style={{ display: 'grid' }}><Icon.Shield size={19} /></span>
+                )}
                 <span style={{ minWidth: 0 }}>
                   <span className="truncate" style={{ display: 'block', fontWeight: 620 }}>{t.name}</span>
                   {/* NCAAF's abbr column usually repeats the school name; show the id

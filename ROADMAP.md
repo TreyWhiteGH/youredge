@@ -195,21 +195,30 @@ Critique and Test-a-hypothesis are live. What remains before Week 1:
   borrow their margin from the two-way parent. What remains is the *accuracy* half —
   power/Shin instead of multiplicative, which is worst exactly where the live data is worst
   (a 1.60 overround on a lopsided college moneyline), and Pinnacle anchoring throughout.
-- **Price the touchdown boards.** `player_anytime_td` and `player_tds_over` still carry no
-  `fair_prob`. They are one-sided and their Yes prices legitimately sum well above 1, so
-  they need an expected-scorer target derived from the de-vigged game total rather than a
-  normalisation. Anytime TD is the most-bet SGP leg there is, so this outranks power/Shin.
+- ~~**Price the touchdown boards.**~~ Done. Distinct scorers regressed on the closing total
+  give the target (2.6 at a total of 30, 6.4 at 70); the book's margin is measured on
+  complete boards and applied to its partial ones, since a ten-name board is partial rather
+  than cheap. Every market on the board now carries a `fair_prob`.
 - **Freshness gating everywhere**, not just in Critique. A leg priced off a stale line
   is worse than no leg.
-- **`user_bets` writes** — log every slip run through Critique at recommendation-time
-  price. This is the CLV record and the Bettor Memory substrate, and it costs nothing
-  to start now.
-- **Tests.** There are none, in a system whose entire pitch is numerical honesty. The
-  minimum: de-vig sums to 1 within every rung, a ladder's rung at a player's main line
-  reproduces that main line's `fair_prob`, alternate ladders stay monotone, the play-text
-  parser's golden file, ledger hit rates stay at 48–50% against closing lines, and a
-  no-lookahead assertion. The first three are checks already run by hand on live data;
-  writing them down is what stops the next grouping change from silently undoing them.
+- ~~**`user_bets` writes**~~ Done. Every critique records the slip with its legs, their fair
+  values, the pasted book price and the independence price. The ratio of the last two is the
+  book's correlation premium — the dataset no API sells, and the thing a per-book haircut
+  model is fitted from. Settlement fills the closing price and result from the catch-up
+  cycle. Still to come: enough volume to fit that model, which is what unlocks Generate.
+- **Tests.** Eleven exist now (`make test`), against the live database rather than fixtures,
+  because the property worth protecting is "do the numbers still mean what we say they
+  mean". Four failed on their first run and each was a real defect: the timeline missing
+  every walk-off score, four college games with their whole scoreboard swapped,
+  `WIRE_TO_WIRE` firing on 65% of games, and the two leagues needing different floors so an
+  NFL regression could not hide behind a college feed limit.
+
+  Covered: de-vig sums to 1 within every rung, no rung holds three sides, alternate ladders
+  stay monotone, `fair_prob` is a probability, touchdown boards land near their target, the
+  scoring timeline reconciles to final scores, the scoreboard never falls, quarter points
+  sum, a run never exceeds a team total, and no tag is modal or dead. Still missing: the
+  play-text parser's golden file, ledger hit rates holding at 48–50% against closing lines,
+  and a no-lookahead assertion.
 
 **Ship gate for Week 1:** Critique and Test-a-hypothesis polished, props flowing, CLV
 logging live. Generate and Build-around stay 501. That is a real product — it tells

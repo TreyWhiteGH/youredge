@@ -164,6 +164,8 @@ the derived layers when something new landed:
 
 ```bash
 make catchup               # one pass of the same chain
+make test                  # invariants: de-vig sums, ladder monotonicity,
+                           # scoring timeline vs final scores, tag base rates
 docker logs -f youredge-results
 ```
 

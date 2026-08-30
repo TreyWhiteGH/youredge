@@ -29,7 +29,7 @@ computes every number; the LLM selects and explains.***
 | Table | Rows | What it is |
 |---|---|---|
 | `games` | 12,553 | **NFL 2016–2026** (3,033) and **NCAAF 2016–2026** (9,520); labels backfilled for training. Complete incl. playoffs/CFP. `season_type` separates postseason; `notes` names bowls/CFP rounds (filter `ILIKE 'CFP%' OR ILIKE 'College Football Playoff%'`). |
-| `plays` | 973,169 | The modeling foundation. NFL rows (484k, 2016–2026) enriched: `epa`, `wpa`, `success`, `complete_pass`, `interception`, `touchdown`, `air_yards`, `yards_after_catch`, `qb_dropback`, `qb_scramble`, `pass_location`, `run_location`, `field_goal_result`, score state, clock. NCAAF rows (489k) carry `ppa` in the `epa` column (CFBD's analog — different scale, **never mix leagues in one aggregate**) and `success` derived as `epa > 0` at ingest time. `complete_pass`, `qb_dropback`, `touchdown` and `interception` are **not** nflverse-only: `cfbd_map` folds CFBD's precise play vocabulary into the eight shared buckets and drops them, and `ingest/cfbd_play_flags.py` recovers them from `playType`. Roughly 26% of college plays carry no PPA from the feed and so get no `success` verdict either way — that is a feed limit, not a gap. |
+| `plays` | 973,518 | The modeling foundation. NFL rows (484k, 2016–2026) enriched: `epa`, `wpa`, `success`, `complete_pass`, `interception`, `touchdown`, `air_yards`, `yards_after_catch`, `qb_dropback`, `qb_scramble`, `pass_location`, `run_location`, `field_goal_result`, score state, clock. NCAAF rows (489k) carry `ppa` in the `epa` column (CFBD's analog — different scale, **never mix leagues in one aggregate**) and `success` derived as `epa > 0` at ingest time. `complete_pass`, `qb_dropback`, `touchdown` and `interception` are **not** nflverse-only: `cfbd_map` folds CFBD's precise play vocabulary into the eight shared buckets and drops them, and `ingest/cfbd_play_flags.py` recovers them from `playType`. Roughly 26% of college plays carry no PPA from the feed and so get no `success` verdict either way — that is a feed limit, not a gap. Every row also carries `home_score` / `away_score`, the absolute scoreboard at that play: `score_differential` is possession-relative, so reconstructing who scored what from it means flipping by possession and inheriting every attribution error as a phantom swing. The absolute pair settles a missed extra point, a two-point conversion, and a return touchdown that belongs to no offensive drive — none of which `drives.points` gets right, since it credits a flat 7 per touchdown and nothing at all for a defensive score. |
 
 **AI context:** every tendency, clutch metric, and script prior computes **from** this table — never quote a stat that doesn't trace here or to an official aggregate. Mode 3 hypothesis testing ("does NY's run defense fade in Q4?") is a query over `plays`, not an opinion.
 
@@ -37,8 +37,8 @@ computes every number; the LLM selects and explains.***
 
 | Table | Rows | What it is |
 |---|---|---|
-| `markets` | 75,351 | A book's priced question per game: `(game_id, bookmaker, market_key, player_name)`. **39 market keys** across 17 bookmakers — the three featured markets, every quarter and half of spreads/totals/h2h, team totals for the halves and Q1, alternate spread and total ladders, six player props and six "X+" player ladders. DK/FD/MGM/Caesars/Pinnacle live; `cfbd:*` historical closing lines. |
-| `odds_snapshots` | 249,637 | Price time series. `implied_prob` (with vig) **and** `fair_prob` (de-vigged). Unique on `(market_id, captured_at, outcome, line)` — the line is in the key because a ladder quotes one side at many numbers. |
+| `markets` | 75,571 | A book's priced question per game: `(game_id, bookmaker, market_key, player_name)`. **39 market keys** across 17 bookmakers — the three featured markets, every quarter and half of spreads/totals/h2h, team totals for the halves and Q1, alternate spread and total ladders, six player props and six "X+" player ladders. DK/FD/MGM/Caesars/Pinnacle live; `cfbd:*` historical closing lines. |
+| `odds_snapshots` | 274,091 | Price time series. `implied_prob` (with vig) **and** `fair_prob` (de-vigged). Unique on `(market_id, captured_at, outcome, line)` — the line is in the key because a ladder quotes one side at many numbers. |
 
 **AI context:** the twin columns are the point. Edge = model probability − `fair_prob`, never − `implied_prob` (that overstates edge by the vig). Snapshot history = line movement, which is CLV's raw material and a narratable fact. All odds events resolve to canonical games (100% both leagues).
 
@@ -46,7 +46,7 @@ computes every number; the LLM selects and explains.***
 
 Books quote the player ladders one-sided, so there is no complement to normalise against; those rungs borrow the margin from their two-way parent market (`player_pass_yds_alternate` divides by the overround of `player_pass_yds` for the same player and book). The check that this holds: a ladder's rung at a player's main line reproduces that main line's own `fair_prob` to three decimals.
 
-`player_anytime_td` and `player_tds_over` carry **no** `fair_prob`, deliberately. Their Yes prices legitimately sum well above 1 — two dozen candidate scorers, about five of whom score — so normalising to 1.0 would replace one wrong number with another. They need an expected-scorer target derived from the de-vigged game total, which is not built yet. Treat a missing `fair_prob` as "not priced", never as zero.
+The touchdown boards are the same problem one step harder. `player_anytime_td` quotes only Yes, for twenty-odd players at once, and those prices legitimately sum well above 1 — a game has four or five distinct scorers — so normalising to 1.0 would replace one wrong number with another. The target is countable instead: distinct rushing/receiving touchdown scorers regressed on the closing total, per league, which runs from 2.6 scorers at a total of 30 to 6.4 at 70. Scaling each board to that target would still be wrong, because a ten-name board is not a low-margin board but a partial one, so the margin is measured only on boards that look complete, taken as a median per book, and applied to all of that book's boards. `player_tds_over` is the same board at 2+ and 3+ and carries the same margin. Treat a missing `fair_prob` as "not priced", never as zero.
 
 The multiplicative method is still biased on longshots; power/Shin and Pinnacle anchoring are open. The worst live overround is ~1.60 on a lopsided college moneyline, which is where that bias is largest.
 
@@ -130,11 +130,15 @@ it has no precipitation. A NULL `temp` means *not available* — never "indoors"
 
 | Table | Rows | What it is |
 |---|---|---|
-| `tags` | 33 | Controlled vocabulary: script tags (`SHOOTOUT`, `GARBAGE_TIME_PASS`…), leg roles (`ANCHOR`, `REDUNDANT`…), angles (`Q4`, `HOME_DOG`…), outcomes (`PROCESS_WIN`, `VARIANCE_LOSS`…). |
-| `taggings` | 0 yet | Polymorphic: anything taggable with weights. `game_scripts` view = top script tags per game. |
+| `tags` | 40 active | Controlled vocabulary, and a **living list** — expect it to grow. 13 `script` tags describe a whole game (`SHOOTOUT`, `WIRE_TO_WIRE`, `COMEBACK_BID_FAILED`…); 27 `diagnostic` tags describe one team in one game (`SMOTHERING_DEFENSE`, `COLD_START`, `SCORING_RUN`…). Also leg roles, angles and outcomes. |
+| `taggings` | 68,801 | Polymorphic. `entity_type = 'game'` keys on `game_id`; `entity_type = 'team_game'` keys on `game_id \|\| '\|' \|\| team_id`, so match with `split_part(entity_id, '\|', 1)` or a game query finds only half of them. `game_scripts` view = top script tags per game. |
 | `user_bets` | 0 yet | Every BetLab bet: legs, price at rec time, fair prob, closing price (CLV), result. |
 
 **AI context:** the shared language between LLM and Engine. The LLM **selects from** `tags` at runtime — never invents one mid-conversation. Parsed hypotheses become Script Specs in these tags; debriefs and coaching join on them.
+
+**Everything here is counted from play-by-play — no PFF, no box scores.** Script tags read `game_state` (built from `plays` and `drives`) plus the closing line; diagnostics read `plays` and `drives` directly. The market line enters only as a reference point — `GRIND` is "total ≤ closing_total − 7" — never as a source of what happened. This matters because the tags are about *sequence*, which a box score does not have: a team that leads by 20 and wins by 3 is a blowout script with a close final score, and only the timeline knows that.
+
+**Thresholds are league-relative, never a flat cut.** A fixed 14-point scoring run fires on 44% of college team-games against 12% of NFL ones, and a tag describing half the population describes nothing. Where a fixed number carries real football meaning it becomes a floor under a percentile — `SCORING_RUN` is `GREATEST(14, league p80)` — and where it does not, it is a percentile outright.
 
 ---
 
@@ -322,6 +326,7 @@ Architecture, the rules the UI holds to, and the fixes made along the way: [FRON
 | `make ingest-cfbd-context` | NCAAF coaching, returning production, talent, SP+, recruiting, portal (2016–2026). Six CFBD calls per season, **one transaction per season** so a late failure can't discard finished ones. |
 | `make poll-odds` | One odds pass, both leagues; resolves events, de-vigs inline. |
 | `make devig` | Fill `fair_prob` where missing. `--rebuild` clears every value and recomputes — needed after any change to how a rung is grouped. |
+| `make test` | The invariant suite — de-vig sums, ladder monotonicity, the scoring timeline against final scores, and no tag being modal or dead. Runs against the live database. |
 | `make catchup` | One pass of the in-season chain below. `--rebuild` forces the derived layers when only their inputs moved. |
 | `python -m youredge.ingest.player_stats --seasons …` | Game logs + QB/receiving NGS. |
 
@@ -336,9 +341,19 @@ docker compose --profile poller up -d poller results
 `poller` snapshots odds. `results` runs `ingest/catchup.py` every 30 minutes:
 schedules and results, then the polls, then play-by-play for weeks holding a
 finished game with no plays, then the college play flags, then `success`, then
-drives, and finally — only when something new landed — the derived layers
-(features, game state, script labels, the leg ledger, the pair surface,
-diagnoses).
+two score repairs, then drives, and finally — only when something new landed —
+the derived layers (features, game state, script labels, the leg ledger, the
+pair surface, diagnoses). Recorded slips settle at the end, once their game is
+final and its leg ledger exists.
+
+The two score repairs exist because CFBD contradicts itself. Its `/games` and
+`/plays` endpoints disagree on a handful of neutral-site games, where every play
+row has the two teams' scores reversed; `/games` is authoritative, so a game
+whose play timeline ends on exactly the opposite of its final score is detected
+and flipped. Separately, no in-game score can exceed the final, so play scores
+are clamped to it — which repairs the case a running maximum cannot, where a
+kickoff row reports a score that is too *high* and the maximum then locks it in
+for the rest of the game.
 
 Each fetch stage carries **its own** staleness test rather than riding on the
 one above it. A drive fetch or a flag backfill can be behind while plays are

@@ -172,6 +172,15 @@ async def catch_up_plays(season: int) -> int:
     return touched
 
 
+async def repair_swapped_scores() -> bool:
+    """Undo CFBD's occasional reversal of play-level scores against its own final."""
+    async with get_engine().begin() as conn:
+        n = (await conn.execute(cfbd_pbp._FIX_SWAPPED)).rowcount
+    if n:
+        log.info("un-swapped play scores on %d rows", n)
+    return bool(n)
+
+
 async def repair_success() -> bool:
     """Fill success on any NCAAF play that has PPA but no verdict yet."""
     async with get_engine().begin() as conn:
@@ -227,6 +236,7 @@ async def cycle(season: int, *, aliases: bool, force: bool = False) -> None:
     fresh = await catch_up_plays(season)
     fresh = await catch_up_flags(season) or fresh
     fresh = await repair_success() or fresh
+    fresh = await repair_swapped_scores() or fresh
     fresh = await catch_up_drives(season) or fresh
     if fresh or force:
         log.info("new rows landed — rebuilding the derived layers")

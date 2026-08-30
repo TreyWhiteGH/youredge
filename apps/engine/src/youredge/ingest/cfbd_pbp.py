@@ -195,6 +195,33 @@ _FILL_SUCCESS = text("""
 """)
 
 
+# CFBD's two endpoints disagree with each other on a handful of games. For the
+# 2023 UNC-South Carolina game its /games row reads North Carolina 31, South
+# Carolina 17 -- correct -- while every /plays row for the same game reports
+# North Carolina's offense with offenseScore 17 against defenseScore 31. The
+# play-level scores are simply reversed at source, and the games seen doing it
+# are neutral-site ones.
+#
+# /games is the authority, so the swap is detectable without guessing: a game
+# whose play timeline ends on exactly the opposite of its final score has its
+# play scores the wrong way round. Requiring the final to be a non-tie keeps a
+# drawn game, where the two are indistinguishable, out of it.
+_FIX_SWAPPED = text("""
+    UPDATE plays p
+    SET home_score = p.away_score, away_score = p.home_score
+    FROM (
+        SELECT g.game_id
+        FROM games g
+        JOIN (SELECT game_id, max(home_score) AS mh, max(away_score) AS ma
+              FROM plays WHERE home_score IS NOT NULL GROUP BY 1) t
+          USING (game_id)
+        WHERE g.status = 'final' AND g.home_score <> g.away_score
+          AND t.mh = g.away_score AND t.ma = g.home_score
+    ) sw
+    WHERE p.game_id = sw.game_id AND p.home_score IS NOT NULL
+""")
+
+
 async def ingest_week(season: int, week: int, season_type: str = "regular", dump: bool = False):
     games, plays, lines = await fetch_week(season, week, season_type)
 
@@ -209,6 +236,7 @@ async def ingest_week(season: int, week: int, season_type: str = "regular", dump
     stats = await insert_week(games, plays, lines)
     async with get_engine().begin() as conn:
         stats["success_filled"] = (await conn.execute(_FILL_SUCCESS)).rowcount
+        stats["scores_unswapped"] = (await conn.execute(_FIX_SWAPPED)).rowcount
     log.info("Inserted: %s", stats)
     return stats
 

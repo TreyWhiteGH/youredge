@@ -52,6 +52,7 @@ export default function TeamDetail() {
 
   const meta = (teams.data?.teams || []).find((t) => t.team_id === teamId);
   const name = meta?.name || bareId(teamId);
+  const poll = teams.data?.poll;
 
   useTrackVisit(meta && { id: teamId, kind: 'team', label: name, to });
 
@@ -61,10 +62,24 @@ export default function TeamDetail() {
         <div style={{ minWidth: 0 }}>
           <div className="eyebrow">{league.toUpperCase()}{meta?.classification ? ` · ${meta.classification.toUpperCase()}` : ''}</div>
           <h1 style={{ marginTop: 4 }} className="row">
-            <span className="accent" style={{ display: 'grid' }}><Icon.Shield size={22} /></span>
+            {meta?.rank ? (
+              <span className="rank-chip lg num" title={`${poll} — ${meta.points} points`}>
+                {meta.rank}
+              </span>
+            ) : (
+              <span className="accent" style={{ display: 'grid' }}><Icon.Shield size={22} /></span>
+            )}
             {name}
           </h1>
-          <div className="sub num">{teamId}</div>
+          <div className="sub row" style={{ gap: 8 }}>
+            <span className="num">{teamId}</span>
+            {meta?.rank && (
+              <span className="tiny muted">
+                {poll} · {teams.data.rank_season} week {teams.data.rank_week}
+                {meta.first_place_votes ? ` · ${meta.first_place_votes} first-place votes` : ''}
+              </span>
+            )}
+          </div>
         </div>
         <div className="spacer" />
         <div className="row" style={{ gap: 6 }}>

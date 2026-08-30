@@ -89,6 +89,7 @@ export const getLive = (league, params, o) =>
 /* ── Slate & matchups ── */
 export const listTeams = (league, params, o) =>
   request(`/${league}/teams`, { params, ...o });
+export const getRankings = (params, o) => request('/ncaaf/rankings', { params, ...o });
 export const listGames = (league, params, o) =>
   request(`/${league}/games`, { params, ...o });
 export const getGame = (league, gameId, o) =>

@@ -218,11 +218,18 @@ see your engine changes. Run a second engine against the same database — the e
 is in [apps/web/README.md](apps/web/README.md) — and point the client at it with
 `ENGINE_URL`.
 
-**`make migrate` is not a general migration runner.** It applies exactly two files
-(`002_markets_null_unique`, `003_snapshot_nullable_price`) and exists for volumes created
-before those were written. A fresh volume runs *all* of `db/migrations/` automatically
-through Postgres's `docker-entrypoint-initdb.d`. If you have an old volume and are missing
-later tables, apply the files you need by hand or `make reset-db` and re-ingest.
+**A long-lived database drifts behind the repo.** Postgres runs
+`docker-entrypoint-initdb.d` once, on an empty volume, so migrations added afterwards never
+run on a database you already have. `db/migrate.sh` is the catch-up path — it tracks what
+has been applied and baselines an existing database rather than replaying `001_init.sql`
+over live tables:
+
+```bash
+./db/migrate.sh
+```
+
+`make migrate` is the older, narrower thing: it applies two specific files and predates the
+tracker. Prefer the script.
 
 **A 404 from a team or player endpoint usually means "no rows", not "bad URL".** The engine
 distinguishes them deliberately. If everything 404s, you have not ingested yet.

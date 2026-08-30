@@ -165,6 +165,21 @@ async def insert_week(games: list[dict], plays: list[dict], lines: list[dict]) -
     }
 
 
+# CFBD ships no success column but does ship PPA, its EPA analog, and nflverse
+# defines success as EPA > 0 — so applying that definition here makes success
+# rate mean the same thing in both leagues. Migration 014 did this once, for the
+# rows that existed the day it ran; every play ingested afterwards arrived with
+# success NULL and stayed that way, which is why the 2026 season had a null
+# success rate on every surface that reports one. It belongs with the ingest,
+# where it runs for whatever was just written.
+_FILL_SUCCESS = text("""
+    UPDATE plays p SET success = (p.epa > 0)
+    FROM games g
+    WHERE g.game_id = p.game_id AND g.league = 'ncaaf'
+      AND p.success IS NULL AND p.epa IS NOT NULL
+""")
+
+
 async def ingest_week(season: int, week: int, season_type: str = "regular", dump: bool = False):
     games, plays, lines = await fetch_week(season, week, season_type)
 
@@ -177,6 +192,8 @@ async def ingest_week(season: int, week: int, season_type: str = "regular", dump
             log.info("Dumped %s", path)
 
     stats = await insert_week(games, plays, lines)
+    async with get_engine().begin() as conn:
+        stats["success_filled"] = (await conn.execute(_FILL_SUCCESS)).rowcount
     log.info("Inserted: %s", stats)
     return stats
 

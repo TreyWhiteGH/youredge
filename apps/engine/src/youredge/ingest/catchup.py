@@ -17,6 +17,18 @@ above it produced something:
      is the stage the season's statistics actually rest on: a game can be final
      and still leave every unit surface empty, which reads on screen as the team
      having played nobody.
+  2a. **Play flags** for college. CFBD names each event precisely but
+     cfbd_map folds that vocabulary into the eight nflverse-shaped buckets both
+     leagues share, so the raw insert leaves complete_pass, qb_dropback,
+     touchdown and interception NULL. Every passing metric, the red-zone
+     touchdown rate and both success rates are computed from those columns, so
+     a season without this stage reports a team's EPA and a null beside it
+     everywhere else.
+  2c. **Success**, derived from CFBD's PPA the way nflverse derives it from EPA.
+     Unlike every other stage this one runs unconditionally, because it is a
+     local UPDATE whose WHERE clause already limits it to rows that need it. The
+     stages above are network fetches and have to be gated on evidence they are
+     needed; a derivation does not, and gating it is how it gets missed.
   2b. **Drives**, which are not derivable from the same rows in both leagues.
      NFL drives are computed from play flags; CFBD's play rows carry neither a
      touchdown flag nor a field-goal result, so college drives come from CFBD's
@@ -42,7 +54,9 @@ import logging
 from sqlalchemy import text
 
 from youredge.db import get_engine
-from youredge.ingest import cfbd_drives, cfbd_pbp, cfbd_rankings, nfl_pbp, schedules
+from youredge.ingest import (
+    cfbd_drives, cfbd_pbp, cfbd_play_flags, cfbd_rankings, nfl_pbp, schedules,
+)
 from youredge.legs import ledger, pairs
 from youredge.modeling import drives as nfl_drives
 from youredge.modeling import features
@@ -73,6 +87,21 @@ _STALE_WEEKS = text("""
 # fail or be skipped while plays are perfectly current — and a trigger that only
 # watched plays would then report everything up to date forever, which is the
 # same class of silence this whole module exists to remove.
+# Flags are their own test for the same reason drives are: the play rows can be
+# perfectly current while the flags on them are absent, and a trigger that only
+# watched for missing plays would call that up to date. complete_pass stands in
+# for the whole set — cfbd_play_flags writes them in one statement, so they are
+# missing or present together.
+_STALE_FLAGS = text("""
+    SELECT DISTINCT g.week, g.season_type
+    FROM games g
+    WHERE g.league = 'ncaaf' AND g.season = :season AND g.status = 'final'
+      AND g.week IS NOT NULL
+      AND EXISTS (SELECT 1 FROM plays p
+                  WHERE p.game_id = g.game_id AND p.complete_pass IS NULL)
+    ORDER BY g.season_type, g.week
+""")
+
 _STALE_DRIVES = text("""
     SELECT DISTINCT g.season_type
     FROM games g
@@ -85,6 +114,24 @@ _STALE_DRIVES = text("""
 async def stale_weeks(conn, league: str, season: int) -> list[tuple[int, str]]:
     rows = (await conn.execute(_STALE_WEEKS, {"league": league, "season": season})).all()
     return [(int(w), st) for w, st in rows]
+
+
+async def stale_flags(conn, season: int) -> list[tuple[int, str]]:
+    rows = (await conn.execute(_STALE_FLAGS, {"season": season})).all()
+    return [(int(w), st) for w, st in rows]
+
+
+async def catch_up_flags(season: int) -> bool:
+    """Recover the play-grain flags cfbd_map's bucketing drops."""
+    engine = get_engine()
+    async with engine.connect() as conn:
+        weeks = await stale_flags(conn, season)
+    if not weeks:
+        return False
+    for week, season_type in weeks:
+        log.info("ncaaf %s week %s (%s): recovering play flags", season, week, season_type)
+        await cfbd_play_flags.backfill_week(season, week, season_type)
+    return True
 
 
 async def stale_drives(conn, league: str, season: int) -> set[str]:
@@ -116,6 +163,15 @@ async def catch_up_plays(season: int) -> int:
         await nfl_pbp.main([season])
         touched += len(nfl)
     return touched
+
+
+async def repair_success() -> bool:
+    """Fill success on any NCAAF play that has PPA but no verdict yet."""
+    async with get_engine().begin() as conn:
+        n = (await conn.execute(cfbd_pbp._FILL_SUCCESS)).rowcount
+    if n:
+        log.info("success derived for %d plays", n)
+    return bool(n)
 
 
 async def catch_up_drives(season: int) -> bool:
@@ -162,6 +218,8 @@ async def cycle(season: int, *, aliases: bool, force: bool = False) -> None:
     # drive test looks for, and checked unconditionally because an old gap has
     # to be repairable on a later pass than the one that opened it.
     fresh = await catch_up_plays(season)
+    fresh = await catch_up_flags(season) or fresh
+    fresh = await repair_success() or fresh
     fresh = await catch_up_drives(season) or fresh
     if fresh or force:
         log.info("new rows landed — rebuilding the derived layers")

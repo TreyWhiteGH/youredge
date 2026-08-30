@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import text
 
 from youredge.db import get_engine
+from youredge.legs import ledger_bets
 from youredge.legs.critique import critique as run_critique
 from youredge.legs.hypothesis import evaluate as run_hypothesis
 
@@ -143,8 +144,19 @@ async def critique(req: CritiqueRequest):
                 "detail": "Run make layer-b to build leg_pair_stats.",
             })
 
-        return await run_critique(
+        result = await run_critique(
             conn, req.game_id, req.league, req.sportsbook, req.legs, req.quoted_odds)
+
+    # A separate transaction, and deliberately after the answer is complete: the
+    # critique is what the caller asked for, and a bookkeeping failure must not
+    # turn a good one into an error. The pasted price is the only real SGP quote
+    # anyone will ever hand us, so it is written down the moment it arrives.
+    async with get_engine().begin() as conn:
+        clv = await ledger_bets.record(
+            conn, result, league=req.league, sportsbook=req.sportsbook)
+    if clv:
+        result["recorded"] = clv
+    return result
 
 
 @router.post("/sgp/save")

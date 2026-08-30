@@ -57,7 +57,7 @@ from youredge.db import get_engine
 from youredge.ingest import (
     cfbd_drives, cfbd_pbp, cfbd_play_flags, cfbd_rankings, nfl_pbp, schedules,
 )
-from youredge.legs import ledger, pairs
+from youredge.legs import ledger, ledger_bets, pairs
 from youredge.modeling import drives as nfl_drives
 from youredge.modeling import features
 from youredge.scripts import diagnose, game_state, label
@@ -245,10 +245,15 @@ async def cycle(season: int, *, aliases: bool, force: bool = False) -> None:
     fresh = await catch_up_flags(season) or fresh
     fresh = await repair_success() or fresh
     fresh = await repair_swapped_scores() or fresh
+    # Slips settle once their game is final and its ledger is built, which is
+    # after the derived rebuild below rather than before it -- so this runs at
+    # the end of the cycle and picks up whatever that pass produced.
     fresh = await catch_up_drives(season) or fresh
     if fresh or force:
         log.info("new rows landed — rebuilding the derived layers")
         await rebuild_derived()
+    async with get_engine().begin() as conn:
+        await ledger_bets.settle(conn)
 
 
 async def main(season: int | None, loop: bool, interval: int, force: bool = False):

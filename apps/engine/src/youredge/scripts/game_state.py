@@ -175,6 +175,21 @@ _SEQUENCE = text("""
                      ORDER BY p.game_seconds_remaining DESC NULLS LAST, p.play_id
                      ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
     ),
+    -- A game that ends on a scoring play has no following snap to carry the
+    -- final score, so the last touchdown is invisible to a timeline built only
+    -- from plays. The known final is appended as a terminal event to close that
+    -- gap; without it a walk-off score is missing from the fourth quarter and
+    -- from any run it belonged to.
+    tl_closed AS (
+        SELECT * FROM tl
+        UNION ALL
+        SELECT g.game_id, 4 AS quarter, -1 AS sec,
+               2147483647 AS play_id, g.home_score, g.away_score
+        FROM games g
+        WHERE g.status = 'final' AND g.league = ANY(:leagues)
+          AND g.home_score IS NOT NULL
+          AND EXISTS (SELECT 1 FROM tl WHERE tl.game_id = g.game_id)
+    ),
     ev AS (
         SELECT game_id, quarter, sec, hs, a_s,
                hs  - lag(hs,  1, 0) OVER w AS h_delta,
@@ -182,7 +197,7 @@ _SEQUENCE = text("""
                sign(hs - a_s) AS leader,
                sign(lag(hs, 1, 0) OVER w - lag(a_s, 1, 0) OVER w) AS prev_leader,
                row_number() OVER w AS seq
-        FROM tl
+        FROM tl_closed
         WINDOW w AS (PARTITION BY game_id ORDER BY sec DESC NULLS LAST, play_id)
     ),
     scores AS (SELECT * FROM ev WHERE h_delta > 0 OR a_delta > 0),

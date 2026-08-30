@@ -32,6 +32,24 @@ charge more on the deep favourites at the short end — but it is a far smaller
 error than the alternative of leaving the rows unpriced, and it is honest about
 which market the margin came from.
 
+**The touchdown boards.** `player_anytime_td` quotes only Yes, for twenty-odd
+players at once, and those Yes prices legitimately sum well above 1 — a game has
+four or five distinct touchdown scorers, so the board sums to roughly that plus
+the book's margin. Normalising it to 1.0 would not remove vig, it would invent a
+different wrong answer.
+
+What it needs is a target, and the target is countable: regress the number of
+distinct rushing/receiving touchdown scorers on the closing total, per league,
+over every finished game. Scorers rise from about 2.6 at a total of 30 to 6.4 at
+70, so this is a real relationship rather than a constant.
+
+Scaling each board to its own target is still wrong, because books post
+different numbers of players — a ten-name board is not a low-margin board, it is
+a partial one, and stretching it to a full-game target inflates every name on
+it. The margin is a property of the book, so it is measured on the boards that
+look complete and then applied to all of that book's boards, exactly as the
+one-sided player ladders borrow from their two-way parent.
+
 Groups are skipped when a side is missing (n < 2) or unpriced (CFBD historical
 spreads/totals carry lines without juice — their implied_prob is NULL). One-sided
 many-way boards are skipped for a deeper reason: `player_anytime_td` quotes only
@@ -135,6 +153,79 @@ _BORROW = text("""
     WHERE s.snapshot_id = pick.snapshot_id AND pick.fair > 0 AND pick.fair < 1
 """)
 
+# Distinct touchdown scorers as a function of the closing total, fitted per
+# league over every finished game, then the book's own margin measured against
+# it. Postgres regr_slope/regr_intercept do the fit, so it re-derives as history
+# grows rather than freezing a coefficient into the source.
+MIN_BOARD = 15          # names below which a board is partial, not cheap
+_TD_BOARD = text("""
+    WITH scorers AS (
+        SELECT s.game_id,
+               count(*) FILTER (WHERE COALESCE(s.rushing_tds, 0)
+                                   + COALESCE(s.receiving_tds, 0) > 0) AS n
+        FROM player_game_stats s GROUP BY 1
+    ),
+    fit AS (
+        SELECT g.league,
+               regr_slope(sc.n, gf.closing_total)     AS b,
+               regr_intercept(sc.n, gf.closing_total) AS a
+        FROM scorers sc
+        JOIN games g USING (game_id)
+        JOIN game_features gf USING (game_id)
+        WHERE g.status = 'final' AND gf.closing_total IS NOT NULL
+        GROUP BY 1
+    ),
+    -- The total to price against: the closing line where one exists, otherwise
+    -- the latest quoted one, because an upcoming game has a market and no close.
+    totals AS (
+        SELECT g.game_id, g.league,
+               COALESCE(gf.closing_total, (
+                   SELECT s2.line FROM markets m2
+                   JOIN odds_snapshots s2 USING (market_id)
+                   WHERE m2.game_id = g.game_id AND m2.market_key = 'totals'
+                     AND s2.outcome ILIKE 'over'
+                   ORDER BY s2.captured_at DESC LIMIT 1)) AS total
+        FROM games g LEFT JOIN game_features gf USING (game_id)
+    ),
+    board AS (
+        SELECT m.game_id, m.bookmaker, s.captured_at,
+               count(*) AS names, sum(s.implied_prob) AS sum_yes
+        FROM odds_snapshots s JOIN markets m USING (market_id)
+        WHERE m.market_key = 'player_anytime_td' AND s.implied_prob IS NOT NULL
+        GROUP BY 1, 2, 3
+    ),
+    ratios AS (
+        SELECT b.bookmaker, t.league,
+               b.sum_yes / NULLIF(f.a + f.b * t.total, 0) AS ratio
+        FROM board b
+        JOIN totals t ON t.game_id = b.game_id
+        JOIN fit f ON f.league = t.league
+        WHERE b.names >= :min_board AND t.total IS NOT NULL
+          AND f.a + f.b * t.total > 0
+    ),
+    -- Median, not mean: one board against a mispriced or missing total would
+    -- drag an average and quietly reprice every game that book quotes.
+    margin AS (
+        SELECT bookmaker, league,
+               percentile_cont(0.5) WITHIN GROUP (ORDER BY ratio) AS k,
+               count(*) AS boards
+        FROM ratios WHERE ratio > 0 GROUP BY 1, 2
+    )
+    UPDATE odds_snapshots s
+    SET fair_prob = s.implied_prob / mg.k
+    FROM markets m, games g, margin mg
+    WHERE s.market_id = m.market_id
+      AND m.game_id = g.game_id
+      AND mg.bookmaker = m.bookmaker AND mg.league = g.league
+      -- player_tds_over is the same board at 2+ and 3+: one-sided, same book,
+      -- same market family, so it carries the same margin. Stated rather than
+      -- derived, because there is not yet enough of it to fit separately.
+      AND m.market_key IN ('player_anytime_td', 'player_tds_over')
+      AND s.implied_prob IS NOT NULL AND s.fair_prob IS NULL
+      AND mg.k > 0 AND mg.boards >= 3
+      AND s.implied_prob / mg.k < 1
+""")
+
 # Every row this reaches was de-vigged against a whole ladder rather than against
 # its own rung. Clearing them is what lets the pass above recompute — it only
 # touches rows where fair_prob IS NULL, which is deliberate everywhere else.
@@ -151,7 +242,11 @@ async def devig_snapshots(conn: AsyncConnection) -> int:
     borrowed = (await conn.execute(_BORROW)).rowcount
     if borrowed:
         log.info("%d ladder rungs priced off a borrowed parent margin", borrowed)
-    return paired + borrowed
+    boards = (await conn.execute(_TD_BOARD, {"min_board": MIN_BOARD})).rowcount
+    if boards:
+        log.info("%d touchdown-board prices scaled to an expected-scorer target",
+                 boards)
+    return paired + borrowed + boards
 
 
 async def main(rebuild: bool):

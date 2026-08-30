@@ -123,6 +123,15 @@ validate-playtext:
 weather-ncaaf:
 	docker compose run --rm ingest python -m youredge.ingest.cfbd_weather --seasons 2023 2024 2025
 
+# Tests run against the live database on purpose. The properties worth
+# protecting are not "does this function return what I typed into a mock" but
+# "do the numbers still mean what we say they mean" -- a de-vig that stops
+# summing to one, a ladder that stops being monotone, a scoring timeline that
+# stops reconciling to the final score. pytest is a dev extra and not in the
+# image, so it is installed into the throwaway run container.
+test:
+	docker compose run --rm -v "$(PWD)/apps/engine/tests:/app/tests" -e DATABASE_URL=postgresql+asyncpg://youredge:youredge_dev@db:5432/youredge ingest sh -c "pip install -q pytest pytest-asyncio && python -m pytest tests -q"
+
 # The season in progress: results, missing play-by-play, then the derived
 # layers — but only when new plays actually landed. Runs continuously as the
 # `results` service; this target is the one-shot version.

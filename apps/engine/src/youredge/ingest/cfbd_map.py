@@ -153,7 +153,12 @@ def transform_plays(
             # touchdown with a missed PAT from one with a two-point conversion,
             # and cannot see a return touchdown at all, because that play belongs
             # to no offensive drive. These two can.
-            *((off_score, def_score) if p.get("offense") == p.get("home")
+            # Resolve both sides through the same name map rather than string
+            # comparison: CFBD writes the home team's name in two fields that do
+            # not always agree exactly, and a mismatch silently swaps the whole
+            # game's scoreboard.
+            *((off_score, def_score)
+              if name_to_tid.get(p.get("home")) == off
               else (def_score, off_score)),
         ))
     return records, skipped

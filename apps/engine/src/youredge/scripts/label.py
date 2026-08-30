@@ -101,9 +101,16 @@ SCRIPTS: list[tuple[str, str]] = [
     # 0 for a scoreless quarter and NULL only when the timeline is missing.
     # Without that guard this fires on every game awaiting a backfill, because
     # "no lead change recorded" and "nothing recorded" look identical.
+    # Also ahead at the first break. Without that this is just "the lead never
+    # changed hands", which is 65% of college games because the favourites are
+    # so large -- true, and too common to be worth saying. Wire to wire should
+    # mean ahead from early on and never headed, which is both the literal sense
+    # and the rarer, more informative one.
     ("WIRE_TO_WIRE", """
         gs.home_q1_points IS NOT NULL
         AND gs.last_lead_change_sec IS NULL AND gs.home_margin <> 0
+        AND gs.margin_end_q1 <> 0
+        AND sign(gs.margin_end_q1) = sign(gs.home_margin)
     """),
     ("LATE_LEAD_CHANGE", """
         gs.last_lead_change_sec IS NOT NULL AND gs.last_lead_change_sec <= 300

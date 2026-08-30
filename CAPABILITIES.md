@@ -204,9 +204,17 @@ is already Sunday in UTC — so the client sends its own local midnight boundari
 server never has to guess at a timezone.
 
 Books are split into **live** (`draftkings`, `fanduel`, `betmgm`, `caesars`, `pinnacle`)
-and **archive** (`cfbd:*`, `nflverse:closing`). Archives are correct for backtests and
-wrong as "the current line", so they are only consulted when no live book has the game,
-and every response flags which kind it returned via `is_live_book`.
+and **archive** (everything else — seventeen bookmakers appear in `markets` and only
+those five are current, so the split is an allowlist rather than a list of archives to
+keep in sync).
+
+**Whether an archive is shown depends on whether the game has been played.** Before
+kickoff it would be masquerading as a price still available, so it is suppressed —
+91 upcoming games carry both kinds and their boards were mixing closing lines in with
+live quotes. After kickoff the closing line *is* the record, and for 11,340 completed
+games it is the only price there is, so it shows. `include_archive` overrides the
+default in either direction, and `archive_books` reports how many were suppressed so a
+caller can tell "never priced" from "hidden".
 
 ### Live scoreboard — `/api/nfl/live` · `/api/ncaaf/live`
 

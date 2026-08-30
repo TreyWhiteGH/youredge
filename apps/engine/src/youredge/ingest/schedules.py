@@ -198,7 +198,16 @@ def current_season(now: datetime | None = None) -> int:
 
 
 async def refresh(season: int, *, aliases: bool = True) -> None:
-    n_nfl = await ingest_nfl_schedule(season)
+    # nflverse serves its schedule file from a GitHub release, and a 404 or a
+    # timeout there is a transient fact about GitHub, not about football. Left
+    # unguarded it takes down the college half of the refresh with it, so a
+    # Saturday of results goes unrecorded because an NFL file was briefly
+    # unavailable.
+    try:
+        n_nfl = await ingest_nfl_schedule(season)
+    except Exception:
+        log.exception("nfl schedule unavailable (continuing with NCAAF)")
+        n_nfl = 0
     # Both season types, because a bowl game left out of the refresh is a game
     # that never gets a score.
     n_ncaaf = sum([

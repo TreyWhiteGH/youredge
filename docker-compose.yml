@@ -96,6 +96,26 @@ services:
     command: ["python", "-m", "youredge.ingest.odds_poller"]
     profiles: ["poller"]
 
+  # The season in progress: results, then the play-by-play behind them, then
+  # everything counted off those plays. Without it running, a Saturday that has
+  # already happened still reads as unplayed, and every surface built on
+  # finished games silently stops at whenever the last manual ingest was.
+  results:
+    image: youredge-engine
+    container_name: youredge-results
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-youredge}:${POSTGRES_PASSWORD:-youredge_dev}@db:5432/${POSTGRES_DB:-youredge}
+      REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./apps/engine/src:/app/src
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    command: ["python", "-m", "youredge.ingest.catchup", "--loop"]
+    profiles: ["poller"]
+
   # Legacy Flask backend (basketball-era endpoints). Opt-in:
   #   docker compose --profile legacy up backend
   backend:

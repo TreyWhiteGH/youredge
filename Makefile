@@ -123,6 +123,12 @@ validate-playtext:
 weather-ncaaf:
 	docker compose run --rm ingest python -m youredge.ingest.cfbd_weather --seasons 2023 2024 2025
 
+# The season in progress: results, missing play-by-play, then the derived
+# layers — but only when new plays actually landed. Runs continuously as the
+# `results` service; this target is the one-shot version.
+catchup:
+	docker compose run --rm ingest python -m youredge.ingest.catchup
+
 # Layer B — the empirical joint. Order matters: state, then labels, then the
 # ledger, then the pair surface.
 game-state:

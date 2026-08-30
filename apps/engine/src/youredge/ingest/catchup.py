@@ -9,8 +9,10 @@ because nothing had asked the feed since.
 Three stages, in dependency order, each of which only does work when the stage
 above it produced something:
 
-  1. **Schedules and results.** The same feed carries both, so this is what moves
-     a game to 'final' and gives it a score.
+  1. **Schedules and results**, plus the polls. The same feed carries schedule
+     and result, so this is what moves a game to 'final' and gives it a score.
+     Rankings ride along here rather than behind the play trigger, because a
+     poll moves every Sunday whether or not this season's play-by-play did.
   2. **Play-by-play** for weeks that now hold finished games with no plays. This
      is the stage the season's statistics actually rest on: a game can be final
      and still leave every unit surface empty, which reads on screen as the team
@@ -40,7 +42,7 @@ import logging
 from sqlalchemy import text
 
 from youredge.db import get_engine
-from youredge.ingest import cfbd_drives, cfbd_pbp, nfl_pbp, schedules
+from youredge.ingest import cfbd_drives, cfbd_pbp, cfbd_rankings, nfl_pbp, schedules
 from youredge.legs import ledger, pairs
 from youredge.modeling import drives as nfl_drives
 from youredge.modeling import features
@@ -150,6 +152,12 @@ async def rebuild_derived() -> None:
 
 async def cycle(season: int, *, aliases: bool, force: bool = False) -> None:
     await schedules.refresh(season, aliases=aliases)
+    # A failed poll fetch must not stop the results chain behind it. Rankings are
+    # a garnish on the slate; scores are not.
+    try:
+        log.info("rankings: %s", await cfbd_rankings.ingest([season]))
+    except Exception:
+        log.exception("rankings refresh failed (continuing)")
     # Drives are checked after plays because new plays create the very gap the
     # drive test looks for, and checked unconditionally because an old gap has
     # to be repairable on a later pass than the one that opened it.

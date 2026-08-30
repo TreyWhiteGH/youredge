@@ -137,24 +137,40 @@ async def game_surface(conn, game_id: str) -> dict[str, Any]:
         # game_features carries closing lines for finished games only. An
         # upcoming game has no closing line yet — it has a market, which is the
         # right input anyway: the forecast should move as the line moves.
+        # Books write the full mascot name -- "Stanford Cardinal" against a
+        # teams.name of "Stanford" -- so an equality match finds nothing and the
+        # spread silently reads as unavailable. Match either side by prefix and
+        # flip the away line into the home convention, which also covers the
+        # common case of a book quoting only the favourite's number.
         live = (await conn.execute(text("""
             SELECT
-              (SELECT s.line FROM markets m JOIN odds_snapshots s USING (market_id)
+              (SELECT CASE WHEN s.outcome ILIKE :home_pat THEN s.line ELSE -s.line END
+                 FROM markets m JOIN odds_snapshots s USING (market_id)
                 WHERE m.game_id = :gid AND m.market_key = 'spreads'
-                  AND s.outcome = :home ORDER BY s.captured_at DESC LIMIT 1) AS spread,
+                  AND (s.outcome ILIKE :home_pat OR s.outcome ILIKE :away_pat)
+                ORDER BY s.captured_at DESC LIMIT 1) AS spread,
               (SELECT s.line FROM markets m JOIN odds_snapshots s USING (market_id)
                 WHERE m.game_id = :gid AND m.market_key = 'totals'
                   AND s.outcome ILIKE 'over' ORDER BY s.captured_at DESC LIMIT 1) AS total
-        """), {"gid": game_id, "home": g["home_name"]})).mappings().first()
+        """), {"gid": game_id,
+               "home_pat": g["home_name"] + "%",
+               "away_pat": g["away_name"] + "%"})).mappings().first()
         if live:
             spread = spread if spread is not None else live["spread"]
             total = total if total is not None else live["total"]
             line_source = "live market"
     scripts: list[dict] = []
-    if spread is not None and total is not None:
-        sp = ("pickem" if abs(spread) <= 3 else "short" if abs(spread) <= 7
+    # One line is enough. _SCRIPT_RATES already backs off from spread+total to
+    # either alone and then to the league, and reports which level it used --
+    # requiring both here defeated that entirely, so a game with a posted total
+    # and no readable spread returned no scripts at all rather than the
+    # total-conditioned ones it had the data for.
+    if spread is not None or total is not None:
+        sp = (None if spread is None else
+              "pickem" if abs(spread) <= 3 else "short" if abs(spread) <= 7
               else "mid" if abs(spread) <= 14 else "big")
-        tot = ("low" if total <= 41 else "mid" if total <= 46
+        tot = (None if total is None else
+               "low" if total <= 41 else "mid" if total <= 46
                else "high" if total <= 51 else "vhigh")
         rows = (await conn.execute(_SCRIPT_RATES, {
             "league": g["league"], "sp": sp, "tot": tot})).mappings().all()

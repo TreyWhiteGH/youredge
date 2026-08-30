@@ -113,3 +113,54 @@ async def test_touchdown_boards_land_near_their_target(conn):
         pytest.skip("no complete touchdown boards priced yet")
     off = [t for t, _ in rows if not (2.0 <= float(t) <= 8.0)]
     assert not off, f"{len(off)} boards sum outside 2–8 scorers, e.g. {off[:3]}"
+
+
+def test_power_leaves_a_coin_flip_alone():
+    """The two methods must agree where a book's cut really is symmetric.
+
+    A -110/-110 market is the case multiplicative de-vig gets right, so power
+    has to reproduce it exactly or the correction is doing something other than
+    removing favourite-longshot bias.
+    """
+    from youredge.pricing.devig import solve_power
+
+    pair = (0.5238, 0.5238)
+    k = solve_power(pair)
+    power = [p ** k for p in pair]
+    mult = [p / sum(pair) for p in pair]
+    assert abs(power[0] - mult[0]) < 1e-4
+    assert abs(sum(power) - 1.0) < 1e-9
+
+
+def test_power_pulls_the_longshot_down():
+    """On a lopsided market the longshot must come in, not stay put.
+
+    Dividing by the overround assumes a book takes the same proportional cut on
+    both sides; it does not, and the extra sits on the longshot. A 9.1% leg by
+    the old method is 5.8% by this one — a 37% relative move on exactly the kind
+    of leg a parlay is built from.
+    """
+    from youredge.pricing.devig import solve_power
+
+    pair = (0.9524, 0.0952)
+    k = solve_power(pair)
+    power = [p ** k for p in pair]
+    mult = [p / sum(pair) for p in pair]
+    assert abs(sum(power) - 1.0) < 1e-9
+    assert power[1] < mult[1] - 0.02, "longshot should come in materially"
+    assert power[0] > mult[0], "favourite should firm up correspondingly"
+
+
+def test_power_refuses_a_market_that_is_not_one():
+    """Both sides near-certain is bad data, and must not be answered anyway.
+
+    Bisection returns an endpoint rather than an error when the root is outside
+    its bracket. Five h2h pairs in the archive have both sides implied near 0.99
+    — an overround of 1.96 — and without a bracket check the solver returned the
+    ceiling and wrote a pair summing to 1.72.
+    """
+    from youredge.pricing.devig import solve_power
+
+    assert solve_power((0.9990, 0.9615)) is None
+    assert solve_power((0.5, 1.0)) is None
+    assert solve_power((0.0, 0.5)) is None

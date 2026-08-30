@@ -1,7 +1,29 @@
 """De-vig: strip bookmaker margin from snapshot implied probabilities.
 
-Multiplicative method: within one priced two-way group, fair_i = implied_i /
-sum(implied). Power-method and Pinnacle anchoring are still to come.
+**Power method.** Within one priced two-way group, find the exponent k for which
+`sum(implied_i ** k) = 1`, then `fair_i = implied_i ** k`. The obvious
+alternative — divide every side by the overround — assumes a book takes the same
+proportional cut on both sides of a market, and books do not. They take more on
+the longshot, which is the favourite-longshot bias, and dividing proportionally
+leaves that bias in place while looking like it removed the vig.
+
+The difference is small on a coin-flip and large exactly where it matters. On a
+-110/-110 spread the two methods agree to three decimals. On a lopsided
+moneyline, where the live data reaches an overround near 2.0, multiplicative
+overstates the longshot by several points of probability — and a several-point
+error on a 5% leg is a large relative error on precisely the kind of leg a
+parlay is built from.
+
+Raising both sides to a common power leaves a near-certainty almost untouched
+(0.95 ** 1.06 is still 0.947) while pulling a longshot down much harder
+(0.10 ** 1.06 is 0.087). That asymmetry is the correction, and it falls out of
+the functional form rather than being tuned.
+
+k is found by bisection: `sum(p ** k)` is strictly decreasing in k for
+probabilities under 1, so the root is unique and forty halvings put it well
+inside float precision. Where a group refuses to bracket — any side at or above
+1.0, which should not occur but would silently poison the solve — it is left
+unpriced rather than approximated.
 
 **What a group is.** A group is (market_id, captured_at, |line|) — not
 (market_id, captured_at). The line is part of the key because a ladder market
@@ -69,6 +91,7 @@ Usage:
 import argparse
 import asyncio
 import logging
+from typing import Sequence
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -76,6 +99,61 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from youredge.db import get_engine
 
 log = logging.getLogger(__name__)
+
+# Bisection bounds. k < 1 is legitimate — a group whose prices sum to under one
+# is a book quoting a market at negative hold, which happens on screen-scraped
+# and stale pairs — and k above 8 would mean an overround no book charges.
+_K_LO, _K_HI, _K_STEPS = 0.2, 8.0, 40
+
+
+def solve_power(probs: Sequence[float]) -> float | None:
+    """Exponent k with sum(p ** k) == 1, or None if the group cannot be solved."""
+    if any(p <= 0 or p >= 1 for p in probs):
+        return None
+    # Bisection assumes the root is inside the bracket, and returns an endpoint
+    # rather than an error when it is not. Some quotes are not markets: five
+    # h2h pairs in the archive have *both* sides implied near 0.99, an overround
+    # of 1.96, and no exponent in any sane range brings that to one. Without this
+    # check the solver returned the ceiling and wrote a pair summing to 1.72.
+    if sum(p ** _K_HI for p in probs) > 1.0:
+        return None
+    if sum(p ** _K_LO for p in probs) < 1.0:
+        return None
+    lo, hi = _K_LO, _K_HI
+    for _ in range(_K_STEPS):
+        mid = (lo + hi) / 2
+        # Decreasing in k, so a sum still above one means k must go higher.
+        if sum(p ** mid for p in probs) > 1.0:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+_GROUPS = text("""
+    WITH keyed AS (
+        SELECT s.snapshot_id, s.market_id, s.captured_at, s.implied_prob,
+               CASE
+                 WHEN m.market_key LIKE '%spread%'
+                      AND s.outcome <> min(s.outcome) OVER (
+                            PARTITION BY s.market_id, s.captured_at)
+                 THEN -s.line ELSE s.line
+               END AS rung
+        FROM odds_snapshots s JOIN markets m USING (market_id)
+        WHERE s.implied_prob IS NOT NULL AND s.fair_prob IS NULL
+    ),
+    sized AS (
+        SELECT *, count(*) OVER (PARTITION BY market_id, captured_at, rung) AS n
+        FROM keyed
+    )
+    SELECT market_id, captured_at, rung,
+           array_agg(snapshot_id) AS ids,
+           array_agg(implied_prob) AS probs
+    FROM sized WHERE n = 2
+    GROUP BY market_id, captured_at, rung
+""")
+
+_APPLY = text("UPDATE odds_snapshots SET fair_prob = :fair WHERE snapshot_id = :sid")
 
 _DEVIG = text("""
     WITH keyed AS (
@@ -232,21 +310,48 @@ _TD_BOARD = text("""
 _CLEAR = text("UPDATE odds_snapshots SET fair_prob = NULL WHERE fair_prob IS NOT NULL")
 
 
+async def devig_power(conn: AsyncConnection) -> int:
+    """Power-method de-vig over every unpriced two-way group."""
+    rows = (await conn.execute(_GROUPS)).all()
+    updates = []
+    unsolved = 0
+    for _mid, _at, _rung, ids, probs in rows:
+        k = solve_power([float(p) for p in probs])
+        if k is None:
+            unsolved += 1
+            continue
+        updates.extend({"sid": sid, "fair": float(p) ** k}
+                       for sid, p in zip(ids, probs))
+    if unsolved:
+        log.info("%d groups had no power solution in range; "
+                 "falling through to multiplicative", unsolved)
+    # Chunked because a single executemany of a few hundred thousand statements
+    # holds the whole list in the driver at once for no benefit.
+    for i in range(0, len(updates), 5000):
+        await conn.execute(_APPLY, updates[i:i + 5000])
+    return len(updates)
+
+
 async def devig_snapshots(conn: AsyncConnection) -> int:
     """Fill fair_prob for every complete, priced, not-yet-devigged group.
 
     Two-way groups first, because the borrowed pass reads the parent quotes the
     first pass has already validated as a genuine pair.
     """
-    paired = (await conn.execute(_DEVIG)).rowcount
+    paired = await devig_power(conn)
     borrowed = (await conn.execute(_BORROW)).rowcount
     if borrowed:
         log.info("%d ladder rungs priced off a borrowed parent margin", borrowed)
+    # Anything the power solve could not bracket falls through to the
+    # multiplicative pass, which is worse but defined everywhere.
+    fallback = (await conn.execute(_DEVIG)).rowcount
+    if fallback:
+        log.info("%d snapshots de-vigged multiplicatively as a fallback", fallback)
     boards = (await conn.execute(_TD_BOARD, {"min_board": MIN_BOARD})).rowcount
     if boards:
         log.info("%d touchdown-board prices scaled to an expected-scorer target",
                  boards)
-    return paired + borrowed + boards
+    return paired + fallback + borrowed + boards
 
 
 async def main(rebuild: bool):

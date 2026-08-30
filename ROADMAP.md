@@ -206,12 +206,21 @@ sentence of generated text. What remains:
   quarter and half, alternate ladders, player props and the "X+" ladders. The per-league
   split was removed once the meter was measured: it charges for markets that return a
   quote, not markets requested, so asking college for a board it does not offer is free.
-- **De-vig upgrade.** The structural half is done: rungs are grouped per line (signed, for
-  spreads), which repaired 15,932 alternate rows that had been divided by a whole ladder's
-  overround and stored at roughly a thirtieth of their true value. One-sided player ladders
-  borrow their margin from the two-way parent. What remains is the *accuracy* half —
-  power/Shin instead of multiplicative, which is worst exactly where the live data is worst
-  (a 1.60 overround on a lopsided college moneyline), and Pinnacle anchoring throughout.
+- ~~**De-vig upgrade.**~~ Done, in three parts. Rungs are grouped per line and, for
+  spreads, per *signed* line — which repaired 15,932 alternate rows divided by a whole
+  ladder's overround and stored at roughly a thirtieth of their true value. One-sided
+  player ladders borrow their margin from the two-way parent. And two-way groups now use
+  the **power method**: find k with `sum(implied ** k) = 1`. Dividing by the overround
+  assumes a book takes the same proportional cut on both sides, and it does not — the extra
+  sits on the longshot. A -110/-110 market is untouched to four decimals; a lopsided
+  moneyline moves its longshot from 9.1% to 5.8%, a 37% relative correction on exactly the
+  kind of leg a parlay is built from. Pinnacle anchoring was already in place at read time
+  (`fair_value.ANCHOR_BOOKS`), which the previous version of this item missed.
+
+  Five h2h pairs in the archive are not markets — both sides implied near 0.99, an
+  overround of 1.96 — and no exponent solves them. They fall through to multiplicative
+  rather than being answered with a bisection endpoint, which is what an unbracketed solve
+  silently returns.
 - ~~**Price the touchdown boards.**~~ Done. Distinct scorers regressed on the closing total
   give the target (2.6 at a total of 30, 6.4 at 70); the book's margin is measured on
   complete boards and applied to its partial ones, since a ten-name board is partial rather

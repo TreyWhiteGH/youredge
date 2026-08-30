@@ -152,10 +152,150 @@ _BUILD = text(f"""
 """)
 
 
+# The scoreboard timeline. Two things make this harder than reading a column.
+#
+# CFBD's score on kickoff and timeout rows is unreliable — it can report a stale
+# value, so a naive read has the score going backwards mid-quarter. A running
+# maximum fixes that without a play-type blacklist, because a score cannot fall.
+#
+# And a run has to be defined by what interrupts it. The gaps-and-islands trick
+# below counts the opponent's scores so far and groups a side's own scores by
+# that count: every time the other team scores, the group advances and the run
+# starts over. The largest group sum is the run.
+_SEQUENCE = text("""
+    WITH tl AS (
+        SELECT p.game_id, p.quarter, p.game_seconds_remaining AS sec, p.play_id,
+               max(p.home_score) OVER w AS hs,
+               max(p.away_score) OVER w AS a_s
+        FROM plays p
+        JOIN games g USING (game_id)
+        WHERE p.home_score IS NOT NULL AND g.status = 'final'
+          AND g.league = ANY(:leagues)
+        WINDOW w AS (PARTITION BY p.game_id
+                     ORDER BY p.game_seconds_remaining DESC NULLS LAST, p.play_id
+                     ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+    ),
+    ev AS (
+        SELECT game_id, quarter, sec, hs, a_s,
+               hs  - lag(hs,  1, 0) OVER w AS h_delta,
+               a_s - lag(a_s, 1, 0) OVER w AS a_delta,
+               sign(hs - a_s) AS leader,
+               sign(lag(hs, 1, 0) OVER w - lag(a_s, 1, 0) OVER w) AS prev_leader,
+               row_number() OVER w AS seq
+        FROM tl
+        WINDOW w AS (PARTITION BY game_id ORDER BY sec DESC NULLS LAST, play_id)
+    ),
+    scores AS (SELECT * FROM ev WHERE h_delta > 0 OR a_delta > 0),
+    runs AS (
+        SELECT game_id, quarter, h_delta, a_delta,
+               count(*) FILTER (WHERE a_delta > 0) OVER (
+                   PARTITION BY game_id ORDER BY seq) AS h_grp,
+               count(*) FILTER (WHERE h_delta > 0) OVER (
+                   PARTITION BY game_id ORDER BY seq) AS a_grp
+        FROM scores
+    ),
+    h_runs AS (
+        SELECT game_id, sum(h_delta) AS run, max(quarter) AS end_q
+        FROM runs GROUP BY game_id, h_grp
+    ),
+    a_runs AS (
+        SELECT game_id, sum(a_delta) AS run, max(quarter) AS end_q
+        FROM runs GROUP BY game_id, a_grp
+    ),
+    h_best AS (
+        SELECT DISTINCT ON (game_id) game_id, run, end_q
+        FROM h_runs ORDER BY game_id, run DESC, end_q
+    ),
+    a_best AS (
+        SELECT DISTINCT ON (game_id) game_id, run, end_q
+        FROM a_runs ORDER BY game_id, run DESC, end_q
+    ),
+    quarters AS (
+        SELECT game_id,
+               sum(h_delta) FILTER (WHERE quarter = 1) AS hq1,
+               sum(h_delta) FILTER (WHERE quarter = 2) AS hq2,
+               sum(h_delta) FILTER (WHERE quarter = 3) AS hq3,
+               sum(h_delta) FILTER (WHERE quarter >= 4) AS hq4,
+               sum(a_delta) FILTER (WHERE quarter = 1) AS aq1,
+               sum(a_delta) FILTER (WHERE quarter = 2) AS aq2,
+               sum(a_delta) FILTER (WHERE quarter = 3) AS aq3,
+               sum(a_delta) FILTER (WHERE quarter >= 4) AS aq4,
+               min(quarter) FILTER (WHERE h_delta > 0) AS h_first_q,
+               min(quarter) FILTER (WHERE a_delta > 0) AS a_first_q
+        FROM scores GROUP BY game_id
+    ),
+    -- A lead change needs a real leader on both sides of it: 0 is a tie, and a
+    -- tie is not a change of hands.
+    leadchg AS (
+        SELECT game_id, min(sec) AS last_sec
+        FROM ev
+        WHERE leader <> 0 AND prev_leader <> 0 AND leader <> prev_leader
+        GROUP BY game_id
+    ),
+    dr AS (
+        SELECT d.game_id, d.posteam_id, d.drive_num, d.points,
+               d.plays, d.result,
+               row_number() OVER (PARTITION BY d.game_id, d.posteam_id
+                                  ORDER BY d.drive_num) AS own_num,
+               sum(CASE WHEN d.points > 0 THEN 1 ELSE 0 END) OVER (
+                   PARTITION BY d.game_id, d.posteam_id
+                   ORDER BY d.drive_num) AS scored_so_far
+        FROM drives d
+        WHERE d.posteam_id IS NOT NULL AND d.result <> 'END_HALF'
+    ),
+    streaks AS (
+        SELECT game_id, posteam_id,
+               count(*) FILTER (WHERE scored_so_far = 0) AS open_scoreless,
+               max(len) AS max_scoreless,
+               count(*) FILTER (WHERE plays <= 3 AND result = 'PUNT') AS three_outs
+        FROM (
+            SELECT dr.*, count(*) OVER (PARTITION BY game_id, posteam_id,
+                                                     scored_so_far) AS len
+            FROM dr
+        ) z GROUP BY game_id, posteam_id
+    )
+    -- Zero, not NULL, for anything countable. A quarter with no scoring sums to
+    -- NULL over an empty set, and NULL fails every comparison silently -- which
+    -- is how a "neither side scored in the first quarter" tag can be written
+    -- correctly and never fire once. NULL is reserved for "the sequence was
+    -- never built for this game", which the WHERE below makes the only cause.
+    UPDATE game_state gs SET
+        home_q1_points = COALESCE(q.hq1, 0), home_q2_points = COALESCE(q.hq2, 0),
+        home_q3_points = COALESCE(q.hq3, 0), home_q4_points = COALESCE(q.hq4, 0),
+        away_q1_points = COALESCE(q.aq1, 0), away_q2_points = COALESCE(q.aq2, 0),
+        away_q3_points = COALESCE(q.aq3, 0), away_q4_points = COALESCE(q.aq4, 0),
+        home_first_score_q = q.h_first_q, away_first_score_q = q.a_first_q,
+        home_max_run = COALESCE(hb.run, 0), home_max_run_end_q = hb.end_q,
+        away_max_run = COALESCE(ab.run, 0), away_max_run_end_q = ab.end_q,
+        last_lead_change_sec = lc.last_sec,
+        home_open_scoreless_drives = COALESCE(hst.open_scoreless, 0),
+        away_open_scoreless_drives = COALESCE(ast.open_scoreless, 0),
+        home_max_scoreless_drives = COALESCE(hst.max_scoreless, 0),
+        away_max_scoreless_drives = COALESCE(ast.max_scoreless, 0),
+        home_three_and_outs = COALESCE(hst.three_outs, 0),
+        away_three_and_outs = COALESCE(ast.three_outs, 0)
+    FROM games g
+    LEFT JOIN quarters q ON q.game_id = g.game_id
+    LEFT JOIN h_best hb  ON hb.game_id = g.game_id
+    LEFT JOIN a_best ab  ON ab.game_id = g.game_id
+    LEFT JOIN leadchg lc ON lc.game_id = g.game_id
+    LEFT JOIN streaks hst ON hst.game_id = g.game_id AND hst.posteam_id = g.home_team_id
+    LEFT JOIN streaks ast ON ast.game_id = g.game_id AND ast.posteam_id = g.away_team_id
+    WHERE gs.game_id = g.game_id AND g.league = ANY(:leagues)
+      -- Only games whose scoreboard timeline actually exists. Without this the
+      -- LEFT JOINs write NULLs over every game still awaiting a score backfill,
+      -- and a downstream tag reading "no lead change" cannot tell that apart
+      -- from "we never looked".
+      AND EXISTS (SELECT 1 FROM tl WHERE tl.game_id = g.game_id)
+""")
+
+
 async def build(leagues: list[str]) -> int:
     engine = get_engine()
     async with engine.begin() as conn:
         n = (await conn.execute(_BUILD, {"leagues": leagues})).rowcount
+        seq = (await conn.execute(_SEQUENCE, {"leagues": leagues})).rowcount
+        log.info("scoring sequence filled on %d games", seq)
         stats = (await conn.execute(text("""
             SELECT g.league, count(*) AS games,
                    round(avg(gs.total_points)::numeric, 1) AS avg_total,

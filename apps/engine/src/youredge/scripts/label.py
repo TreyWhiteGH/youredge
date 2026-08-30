@@ -89,6 +89,34 @@ SCRIPTS: list[tuple[str, str]] = [
     """),
     # Led by double digits after one quarter and finished at least that much
     # worse off. The early lead was not the game.
+    # --- sequence -----------------------------------------------------------
+    # Everything above reads totals and peaks. These read order.
+    ("TRADED_HAYMAKERS", """
+        gs.home_max_run >= 14 AND gs.away_max_run >= 14
+    """),
+    # Nobody ever took the lead back. NULL here means the leader never changed
+    # hands at all, which is exactly the condition — a game tied and untied is
+    # not a change of hands, and the sequence builder already excludes ties.
+    # home_q1_points is the witness that the sequence was built at all: it is
+    # 0 for a scoreless quarter and NULL only when the timeline is missing.
+    # Without that guard this fires on every game awaiting a backfill, because
+    # "no lead change recorded" and "nothing recorded" look identical.
+    ("WIRE_TO_WIRE", """
+        gs.home_q1_points IS NOT NULL
+        AND gs.last_lead_change_sec IS NULL AND gs.home_margin <> 0
+    """),
+    ("LATE_LEAD_CHANGE", """
+        gs.last_lead_change_sec IS NOT NULL AND gs.last_lead_change_sec <= 300
+    """),
+    # The losing side put together two unanswered scores in the fourth and still
+    # lost. This is the shape of a game that reads close at the end and was not.
+    ("COMEBACK_BID_FAILED", """
+        (gs.home_margin < 0 AND gs.home_max_run >= 14 AND gs.home_max_run_end_q >= 4)
+        OR (gs.home_margin > 0 AND gs.away_max_run >= 14 AND gs.away_max_run_end_q >= 4)
+    """),
+    ("SLOW_BURN", """
+        gs.home_q1_points = 0 AND gs.away_q1_points = 0
+    """),
     ("FAST_START_FADE", f"""
         gs.margin_end_q1 IS NOT NULL
         AND abs(gs.margin_end_q1) >= {FADE_LEAD}

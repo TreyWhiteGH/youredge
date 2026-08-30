@@ -33,8 +33,15 @@ PLAY_COLS = [
     "posteam_id", "defteam_id", "down", "ydstogo", "yardline_100", "play_type",
     "yards_gained", "epa", "wp", "score_differential",
     "passer_player_id", "rusher_player_id", "receiver_player_id",
+    "home_score", "away_score",
 ]
 # transform_plays emits tuples in exactly this column order.
+
+# Re-ingesting a week must be able to fill a column that did not exist the first
+# time. DO NOTHING made every backfill a silent no-op on rows already present,
+# which is how home_score/away_score would have stayed NULL on 489k college
+# plays after being added.
+_SCORE_COLS = ("home_score", "away_score", "score_differential")
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
@@ -61,6 +68,13 @@ async def fetch_week(season: int, week: int, season_type: str):
 
 
 async def insert_week(games: list[dict], plays: list[dict], lines: list[dict]) -> dict:
+    # A week with no games is the normal state of postseason weeks 2 onward:
+    # bowls and the playoff all file under week 1. Falling through to the COPY
+    # leaves the temp table uncreated and raises UndefinedTableError, which
+    # aborted a whole multi-season backfill after its first empty week.
+    if not games:
+        return {"plays_inserted": 0, "plays_skipped": 0,
+                "line_snapshots": 0, "line_games_skipped": 0}
     t = cfbd_map.transform_games(games)
     known_gids = {g["gid"] for g in t["games"]}
     play_records, plays_skipped = cfbd_map.transform_plays(plays, t["name_to_tid"], known_gids)
@@ -112,14 +126,15 @@ async def insert_week(games: list[dict], plays: list[dict], lines: list[dict]) -
                 drive_num INT, posteam_id TEXT, defteam_id TEXT, down INT, ydstogo INT,
                 yardline_100 INT, play_type TEXT, yards_gained REAL, epa REAL, wp REAL,
                 score_differential INT, passer_player_id TEXT, rusher_player_id TEXT,
-                receiver_player_id TEXT
+                receiver_player_id TEXT, home_score INT, away_score INT
             ) ON COMMIT DROP
         """)
         await apg.copy_records_to_table("_plays_stage", records=play_records, columns=PLAY_COLS)
         tag = await apg.execute(f"""
             INSERT INTO plays ({", ".join(PLAY_COLS)})
             SELECT {", ".join(PLAY_COLS)} FROM _plays_stage
-            ON CONFLICT (game_id, source_play_id) DO NOTHING
+            ON CONFLICT (game_id, source_play_id) DO UPDATE
+              SET {", ".join(f"{c} = EXCLUDED.{c}" for c in _SCORE_COLS)}
         """)
         plays_inserted = int(tag.split()[-1])
 

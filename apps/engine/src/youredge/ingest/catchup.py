@@ -160,8 +160,15 @@ async def catch_up_plays(season: int) -> int:
         # nflverse ships a season of play-by-play as one file, so there is no
         # per-week fetch to make; the weeks are only how we noticed.
         log.info("nfl %s: %d week(s) behind, refreshing the season", season, len(nfl))
-        await nfl_pbp.main([season])
-        touched += len(nfl)
+        try:
+            await nfl_pbp.main([season])
+            touched += len(nfl)
+        except Exception:
+            # nflreadpy refuses a season it has no file for and raises rather
+            # than returning empty, which in the first days of a season is the
+            # normal state of the world, not an error. Letting it through would
+            # abandon the college half of the cycle for a week every autumn.
+            log.exception("nfl play-by-play unavailable for %s (continuing)", season)
     return touched
 
 

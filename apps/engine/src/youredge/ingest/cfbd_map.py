@@ -149,6 +149,12 @@ def transform_plays(
             None,  # wp: not provided per-play by CFBD REST
             (off_score - def_score) if off_score is not None and def_score is not None else None,
             None, None, None,  # player ids: CFBD plays don't carry athlete ids; playText parse later
+            # Absolute scoreboard. The differential above cannot distinguish a
+            # touchdown with a missed PAT from one with a two-point conversion,
+            # and cannot see a return touchdown at all, because that play belongs
+            # to no offensive drive. These two can.
+            *((off_score, def_score) if p.get("offense") == p.get("home")
+              else (def_score, off_score)),
         ))
     return records, skipped
 

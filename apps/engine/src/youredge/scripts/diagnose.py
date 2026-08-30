@@ -178,6 +178,49 @@ DIAGNOSES: list[tuple[str, str]] = [
         AND o.avg_start_yardline - d.avg_start_yardline >= 5
     """),
     ("EMPTY_CALORIES",  "d.garbage_yard_share >= 0.40"),
+
+    # --- sequence: what a box score cannot say -------------------------------
+    # Nothing above knows what order anything happened in. These do.
+
+    # Scoreless through the opening quarter and three or more possessions.
+    # Distinct from simply being bad: a team can start cold and win.
+    ("COLD_START", """
+        seq.q1_points = 0 AND seq.open_scoreless >= 3
+    """),
+    # Fourteen unanswered is two scores with no reply, which is where a game
+    # stops being close on the scoreboard even when it is close on the field.
+    # Fourteen unanswered is two scores with no reply, which is where a game
+    # stops being close on the scoreboard even when it is close on the field.
+    # But a flat 14 fires on 44% of college team-games against 12% of NFL ones,
+    # and a tag that describes almost half the population describes nothing. The
+    # floor keeps the football meaning — this never fires on a one-score run —
+    # and the league percentile keeps it rare where scoring runs are ordinary.
+    ("SCORING_RUN", "seq.max_run >= GREATEST(14, q.max_run_p80)"),
+    ("LATE_SURGE",  "seq.q4_points >= 14"),
+    ("SCORING_DROUGHT", "seq.max_scoreless >= q.scoreless_p90"),
+    # Took the offence away rather than merely outscoring it: negative EPA in
+    # both phases at once, with the points to match. Written from the defence's
+    # side, so it reads off the opponent's row.
+    ("SMOTHERING_DEFENSE", """
+        o.pass_epa < 0 AND o.rush_epa < 0
+        AND d.points_against <= q.points_p25
+    """),
+    # The same game from the other bench.
+    ("OFFENSE_SHUT_DOWN", """
+        d.pass_epa < 0 AND d.rush_epa < 0
+        AND d.points_for <= q.points_p25
+    """),
+    # Strictly greater, not at least. Three-and-out counts are small integers
+    # and the 75th percentile is itself 3, so >= sweeps in the whole modal band
+    # and fires on two team-games in five.
+    ("THREE_AND_OUT_PLAGUED", "seq.three_outs > q.three_outs_p75"),
+    # Won, and the last time the lead changed hands was in the fourth. Only the
+    # winner can satisfy this, which is why no side check is needed: the loser
+    # was ahead before that change, not after it.
+    ("GO_AHEAD_ANSWER", """
+        seq.won AND gs.last_lead_change_sec IS NOT NULL
+        AND gs.last_lead_change_sec <= 900
+    """),
 ]
 
 _QUARTILES = """
@@ -196,8 +239,27 @@ _QUARTILES = """
                                           / NULLIF(d.third_att,0))   AS third_p75,
       percentile_cont(0.75) WITHIN GROUP (ORDER BY d.explosive_rate) AS explosive_p75,
       percentile_cont(0.75) WITHIN GROUP (ORDER BY d.penalties)      AS penalties_p75,
-      percentile_cont(0.50) WITHIN GROUP (ORDER BY d.rush_epa + d.pass_epa) AS epa_sum_med
-    FROM team_game_diagnostics d JOIN games g USING (game_id) GROUP BY g.league
+      percentile_cont(0.50) WITHIN GROUP (ORDER BY d.rush_epa + d.pass_epa) AS epa_sum_med,
+      percentile_cont(0.25) WITHIN GROUP (ORDER BY d.points_for)      AS points_p25,
+      -- Three-and-outs are a possession fact and live in game_state, so the
+      -- percentile has to reach across and flip by side like the predicates do.
+      percentile_cont(0.75) WITHIN GROUP (ORDER BY
+          CASE WHEN d.team_id = g.home_team_id THEN gs2.home_three_and_outs
+               ELSE gs2.away_three_and_outs END)                     AS three_outs_p75,
+      -- A drought has to be rare to be worth saying. The median team already
+      -- goes four possessions without points in a normal game, so anything at
+      -- or near the median describes football rather than this game. p90 is the
+      -- level that picks out a genuine stall, and it differs by league.
+      percentile_cont(0.90) WITHIN GROUP (ORDER BY
+          CASE WHEN d.team_id = g.home_team_id THEN gs2.home_max_scoreless_drives
+               ELSE gs2.away_max_scoreless_drives END)               AS scoreless_p90,
+      percentile_cont(0.80) WITHIN GROUP (ORDER BY
+          CASE WHEN d.team_id = g.home_team_id THEN gs2.home_max_run
+               ELSE gs2.away_max_run END)                            AS max_run_p80
+    FROM team_game_diagnostics d
+    JOIN games g USING (game_id)
+    LEFT JOIN game_state gs2 ON gs2.game_id = d.game_id
+    GROUP BY g.league
 """
 
 _TAG = """
@@ -208,6 +270,32 @@ _TAG = """
     JOIN ({quartiles}) q ON q.league = g.league
     LEFT JOIN team_game_diagnostics o
            ON o.game_id = d.game_id AND o.team_id = d.opponent_id
+    LEFT JOIN game_state gs ON gs.game_id = d.game_id
+    -- game_state stores everything home/away; a diagnosis is about one team.
+    -- Flipping once here keeps every predicate below written from that team's
+    -- point of view instead of repeating a CASE in each one.
+    LEFT JOIN LATERAL (
+        SELECT (d.team_id = g.home_team_id) AS is_home,
+               CASE WHEN d.team_id = g.home_team_id
+                    THEN gs.home_q1_points ELSE gs.away_q1_points END AS q1_points,
+               CASE WHEN d.team_id = g.home_team_id
+                    THEN gs.home_q4_points ELSE gs.away_q4_points END AS q4_points,
+               CASE WHEN d.team_id = g.home_team_id
+                    THEN gs.home_max_run ELSE gs.away_max_run END AS max_run,
+               CASE WHEN d.team_id = g.home_team_id
+                    THEN gs.home_max_run_end_q ELSE gs.away_max_run_end_q END AS run_end_q,
+               CASE WHEN d.team_id = g.home_team_id
+                    THEN gs.home_first_score_q ELSE gs.away_first_score_q END AS first_score_q,
+               CASE WHEN d.team_id = g.home_team_id
+                    THEN gs.home_open_scoreless_drives
+                    ELSE gs.away_open_scoreless_drives END AS open_scoreless,
+               CASE WHEN d.team_id = g.home_team_id
+                    THEN gs.home_max_scoreless_drives
+                    ELSE gs.away_max_scoreless_drives END AS max_scoreless,
+               CASE WHEN d.team_id = g.home_team_id
+                    THEN gs.home_three_and_outs ELSE gs.away_three_and_outs END AS three_outs,
+               (d.points_for > d.points_against) AS won
+    ) seq ON TRUE
     CROSS JOIN (SELECT tag_id FROM tags WHERE slug = :slug) t
     WHERE ({predicate})
     ON CONFLICT (tag_id, entity_type, entity_id) DO NOTHING

@@ -27,6 +27,7 @@ EXTRACTED = [
     "qb_dropback", "qb_scramble", "pass_location", "run_location",
     "wpa", "success", "field_goal_result",
     "fumble_lost", "safety", "penalty", "sack",
+    "total_home_score", "total_away_score",
 ]
 
 PLAY_COLS = [
@@ -38,6 +39,10 @@ PLAY_COLS = [
     "qb_dropback", "qb_scramble", "pass_location", "run_location",
     "wpa", "success", "field_goal_result",
     "fumble_lost", "safety", "penalty", "sack",
+    # The absolute scoreboard. score_differential above is possession-relative,
+    # so reconstructing who scored what from it means flipping by posteam and
+    # inheriting every attribution error as a phantom swing. These do not.
+    "home_score", "away_score",
 ]
 # Re-runs refresh these in place (they were added after the first backfill).
 ENRICH_COLS = PLAY_COLS[18:]
@@ -128,6 +133,7 @@ async def ingest_season(season: int) -> int:
                 _s(p.pass_location), _s(p.run_location),
                 _f(p.wpa), _b(p.success), _s(p.field_goal_result),
                 _b(p.fumble_lost), _b(p.safety), _b(p.penalty), _b(p.sack),
+                _i(p.total_home_score), _i(p.total_away_score),
             ))
 
         raw_conn = await conn.get_raw_connection()
@@ -144,7 +150,8 @@ async def ingest_season(season: int) -> int:
                 qb_dropback BOOLEAN, qb_scramble BOOLEAN,
                 pass_location TEXT, run_location TEXT,
                 wpa REAL, success BOOLEAN, field_goal_result TEXT,
-                fumble_lost BOOLEAN, safety BOOLEAN, penalty BOOLEAN, sack BOOLEAN
+                fumble_lost BOOLEAN, safety BOOLEAN, penalty BOOLEAN, sack BOOLEAN,
+                home_score INT, away_score INT
             ) ON COMMIT DROP
         """)
         await apg.copy_records_to_table("_plays_stage", records=records, columns=PLAY_COLS)

@@ -63,6 +63,9 @@ function TeamRow({ team, dim, showScore }) {
   return (
     <div className={`game-team${dim ? ' loser' : ''}`}>
       {code && <span className="abbr num">{code}</span>}
+      {/* The rank the team carried into this game, so a past result keeps the matchup
+          it actually was rather than being relabelled by today's poll. */}
+      {team.rank ? <span className="rk num">{team.rank}</span> : null}
       <span className="nm truncate">{team.name}</span>
       <span className="sp" />
       {showScore ? <span className="sc num">{team.score ?? '—'}</span> : null}

@@ -174,7 +174,7 @@ would otherwise pad the field to 237 and flatter every rank.
 | Endpoint | AI context |
 |---|---|
 | `GET /teams` | Every team in the league, carrying its current poll `rank`. NCAAF defaults to FBS — the 105 FCS teams have no odds and no context rows. `ranked=true` returns only the Top 25. |
-| `GET /games` | The slate. Filter by `season`/`week`/`status`/`team_id`, `upcoming=true`, or a `kickoff_from`/`kickoff_to` instant window. Each game carries teams, per-game conditions, and the best book's current price line. |
+| `GET /games` | The slate. Filter by `season`/`week`/`status`/`team_id`, `upcoming=true`, or a `kickoff_from`/`kickoff_to` instant window. Each game carries teams, per-game conditions, the best book's current price line, and each side's **poll rank as of that game's week** — not today's poll, so a past result keeps the matchup it actually was. |
 | `GET /games/{game_id}` | One matchup with every book that quotes it. |
 | `GET /games/{game_id}/odds` | Full board plus the snapshot time series. `sections` splits the non-featured game-level markets into alternates, period markets and team totals; `prop_market_keys` counts the props without expanding them. |
 | `GET /games/{game_id}/props` | Player props grouped by **subject** rather than by market — a prop board keyed by market makes you hunt one player across six tables. Over/under markets carry a line and two sides; anytime-touchdown carries only a price on "Yes", so shape follows market. `player_id` is null for D/ST entries, which keep `side_team_id` and are labelled rather than dropped. Books disagree on the line, so the line is part of the key: over 249.5 and over 264.5 are different bets. |

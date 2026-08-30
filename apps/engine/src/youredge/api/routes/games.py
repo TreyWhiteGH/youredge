@@ -165,17 +165,33 @@ async def rankings(
             "count": len(out), "rankings": out}
 
 
+# The poll a team carried *into* a game, not today's poll. CFBD's week 1 is the
+# preseason ballot, so the ranking in effect for a week-N game is the newest poll at or
+# before week N — showing a November ranking on an September result would rewrite what
+# the matchup actually was. Future weeks have no poll of their own yet, so they inherit
+# the latest published one, which is exactly what a scoreboard should show.
+_RANK_AT = """
+    LEFT JOIN LATERAL (
+        SELECT r.rank FROM team_rankings r
+        WHERE r.team_id = {team}.team_id AND r.poll = :poll
+          AND r.season = g.season AND r.week <= COALESCE(g.week, 99)
+        ORDER BY r.week DESC LIMIT 1
+    ) {alias} ON true
+"""
+
 _GAMES_SQL = """
     SELECT g.game_id, g.season, g.week, g.season_type, g.kickoff, g.status,
            g.home_score, g.away_score, g.neutral_site, g.roof, g.surface,
            g.temp, g.wind, g.notes,
            h.team_id AS home_id, h.abbr AS home_abbr, h.name AS home_name,
            a.team_id AS away_id, a.abbr AS away_abbr, a.name AS away_name,
+           hr.rank AS home_rank, ar.rank AS away_rank,
            v.name AS venue_name, v.city AS venue_city, v.state AS venue_state,
            v.elevation AS venue_elevation, v.dome AS venue_dome
     FROM games g
     JOIN teams h ON h.team_id = g.home_team_id
     JOIN teams a ON a.team_id = g.away_team_id
+    """ + _RANK_AT.format(team="h", alias="hr") + _RANK_AT.format(team="a", alias="ar") + """
     LEFT JOIN venues v ON v.venue_id = g.venue_id
     WHERE g.league = :league
       AND (CAST(:season AS int) IS NULL OR g.season = :season)
@@ -305,13 +321,14 @@ async def list_games(
     order: str = Query(default="asc", pattern="^(asc|desc)$"),
     limit: int = Query(default=100, le=400),
     odds: bool = Query(default=True, description="attach the best-book price line"),
+    poll: str = Query(default=DEFAULT_POLL, description="NCAAF poll for team ranks"),
 ):
     league = _league(request)
     sql = text(_GAMES_SQL.format(order="ASC" if order == "asc" else "DESC"))
     async with get_engine().connect() as conn:
         rows = (await conn.execute(sql, {
             "league": league, "season": season, "week": week, "status": status,
-            "team": team_id, "upcoming": upcoming, "lim": limit,
+            "team": team_id, "upcoming": upcoming, "lim": limit, "poll": poll,
             "ko_from": _instant(kickoff_from, "kickoff_from"),
             "ko_to": _instant(kickoff_to, "kickoff_to"),
             "now": datetime.now(timezone.utc),
@@ -350,9 +367,11 @@ def _game_shape(r: dict) -> dict:
         "notes": r["notes"],
         "neutral_site": r["neutral_site"],
         "home": {"team_id": r["home_id"], "abbr": r["home_abbr"],
-                 "name": r["home_name"], "score": r["home_score"]},
+                 "name": r["home_name"], "score": r["home_score"],
+                 "rank": r["home_rank"]},
         "away": {"team_id": r["away_id"], "abbr": r["away_abbr"],
-                 "name": r["away_name"], "score": r["away_score"]},
+                 "name": r["away_name"], "score": r["away_score"],
+                 "rank": r["away_rank"]},
         # roof/surface/temp/wind are per game, not per venue: retractable roofs open and
         # a neutral-site game isn't played on the home surface. NULL temp means "not
         # reported" (CFBD's weather is paywalled) — never "indoors" or "calm".
@@ -373,7 +392,8 @@ async def game_detail(request: Request, game_id: str):
             text(_GAMES_SQL.format(order="ASC").replace(
                 "AND (NOT :upcoming OR g.kickoff >= :now)", "AND g.game_id = :gid")),
             {"league": league, "season": None, "week": None, "status": None,
-             "team": None, "lim": 1, "gid": game_id, "ko_from": None, "ko_to": None},
+             "team": None, "lim": 1, "gid": game_id, "ko_from": None, "ko_to": None,
+             "poll": DEFAULT_POLL},
         )).mappings().first()
         if row is None:
             raise HTTPException(status_code=404, detail=f"unknown game_id {game_id}")

@@ -119,26 +119,32 @@ async def record(conn, result: dict[str, Any], *, league: str, sportsbook: str,
 
     keys = {"gid": result["game_id"], "book": sportsbook, "mode": mode,
             "legs": json.dumps(payload), "quoted": quoted}
+    # Deduplication decides whether to *store* the slip, never whether to answer
+    # about it. Suppressing the whole summary on a repeat meant that looking at
+    # the same slip twice made the correlation panel vanish the second time,
+    # which reads as a bug and hides the most useful number on the page.
+    bet_id = None
     try:
-        if (await conn.execute(_RECENT_DUPLICATE, keys)).first() is not None:
-            return None
-        bet_id = (await conn.execute(_INSERT, {
-            "user": LOCAL_USER, "gid": result["game_id"], "book": sportsbook,
-            "mode": mode, "legs": json.dumps(payload),
-            "quoted": quoted,
-            "fair": independence,
-            # Edge of the slip as quoted against independence. Not the real edge
-            # — correlation is missing — but it is the honest arithmetic on the
-            # two numbers actually in hand.
-            "edge": (american_to_prob(quoted) - independence)
-                    if quoted is not None else None,
-        })).scalar_one()
+        duplicate = (await conn.execute(_RECENT_DUPLICATE, keys)).first() is not None
+        if not duplicate:
+            bet_id = (await conn.execute(_INSERT, {
+                "user": LOCAL_USER, "gid": result["game_id"], "book": sportsbook,
+                "mode": mode, "legs": json.dumps(payload),
+                "quoted": quoted,
+                "fair": independence,
+                # Edge of the slip as quoted against independence. Not the real
+                # edge — correlation is missing — but it is honest arithmetic on
+                # the two numbers actually in hand.
+                "edge": (american_to_prob(quoted) - independence)
+                        if quoted is not None else None,
+            })).scalar_one()
     except Exception:
+        # The summary below is arithmetic on numbers already in hand, so it
+        # stands whether or not the row was written.
         log.exception("could not record slip for %s", result.get("game_id"))
-        return None
 
     return {
-        "bet_id": str(bet_id),
+        "bet_id": str(bet_id) if bet_id else None,
         "legs_priced": len(priced),
         "legs_total": len(legs),
         "independence_prob": round(independence, 4),

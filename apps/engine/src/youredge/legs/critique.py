@@ -163,16 +163,22 @@ async def critique(conn, game_id: str, league: str, sportsbook: str,
     if len(parsed) >= 2:
         a, b = parsed[0], parsed[1]
         key = sorted([(a["template"], a["side"]), (b["template"], b["side"])])
+        # The tag's own description travels with it. The vocabulary is expected
+        # to keep growing, so any label map living in the frontend would be
+        # stale the day after the next tag is seeded.
         rows = (await conn.execute(text("""
-            SELECT script_tag, n, phi FROM leg_pair_stats
-            WHERE league = :lg AND script_tag <> ''
-              AND template_a = :ta AND side_a = :sa
-              AND template_b = :tb AND side_b = :sb
-              AND n >= 100 AND phi IS NOT NULL
-            ORDER BY phi DESC
+            SELECT s.script_tag, s.n, s.phi, t.description
+            FROM leg_pair_stats s
+            LEFT JOIN tags t ON t.slug = s.script_tag AND t.dimension = 'script'
+            WHERE s.league = :lg AND s.script_tag <> ''
+              AND s.template_a = :ta AND s.side_a = :sa
+              AND s.template_b = :tb AND s.side_b = :sb
+              AND s.n >= 100 AND s.phi IS NOT NULL
+            ORDER BY s.phi DESC
         """), {"lg": league, "ta": key[0][0], "sa": key[0][1],
                "tb": key[1][0], "sb": key[1][1]})).mappings().all()
-        scripts = [{"script": r["script_tag"], "phi": round(r["phi"], 3), "n": r["n"]}
+        scripts = [{"script": r["script_tag"], "phi": round(r["phi"], 3),
+                    "n": r["n"], "description": r["description"]}
                    for r in rows]
 
     return {

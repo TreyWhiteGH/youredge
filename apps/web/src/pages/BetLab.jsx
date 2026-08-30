@@ -20,7 +20,7 @@ import Icon from '../icons';
 import * as api from '../lib/api';
 import { useApi } from '../lib/hooks';
 import { useApp } from '../lib/store';
-import { kickoffFull } from '../lib/format';
+import { american, kickoffFull } from '../lib/format';
 import { Card, CardHead, Empty, ErrorState, Loading, Notice, PhaseGate, Section } from '../components/ui';
 
 const MODES = [
@@ -95,6 +95,48 @@ function CritiqueResult({ data }) {
         </div>
       </div>
 
+      {data.recorded && (
+        <div className="col" style={{ gap: 8 }}>
+          <div className="small muted">What your book charged for the correlation</div>
+          <div className="card card-pad col" style={{ gap: 10 }}>
+            <div className="row" style={{ gap: 24, flexWrap: 'wrap' }}>
+              <span className="col" style={{ gap: 2 }}>
+                <span className="small muted">If the legs were independent</span>
+                <strong style={{ fontSize: 20 }}>
+                  {american(data.recorded.independence_price_american)}
+                </strong>
+              </span>
+              <span className="col" style={{ gap: 2 }}>
+                <span className="small muted">Your book quoted</span>
+                <strong style={{ fontSize: 20 }}>
+                  {american(data.recorded.quoted_price_american)}
+                </strong>
+              </span>
+              {data.recorded.book_haircut_vs_independence != null && (
+                <span className="col" style={{ gap: 2 }}>
+                  <span className="small muted">Priced as more likely than independent</span>
+                  <strong style={{ fontSize: 20 }}>
+                    {data.recorded.book_haircut_vs_independence > 0 ? '+' : ''}
+                    {(data.recorded.book_haircut_vs_independence * 100).toFixed(1)}%
+                  </strong>
+                </span>
+              )}
+            </div>
+            <div className="small muted" style={{ lineHeight: 1.55 }}>
+              {data.recorded.quoted_price_american == null
+                ? 'Paste the price off your slip above and this becomes exact rather than illustrative.'
+                : data.recorded.note}
+            </div>
+            {data.recorded.legs_priced < data.recorded.legs_total && (
+              <div className="small muted">
+                Based on {data.recorded.legs_priced} of {data.recorded.legs_total} legs — the rest
+                are not currently priced, so they are left out rather than assumed even money.
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="col" style={{ gap: 8 }}>
         <div className="small muted">Leg against leg, counted over finished games</div>
         {(data.pairs || []).map((pr, i) => {
@@ -127,15 +169,31 @@ function CritiqueResult({ data }) {
           </div>
           <div style={{ overflowX: 'auto' }}>
             <table className="table num small">
-              <thead><tr><th style={{ textAlign: 'left' }}>Script</th><th>Correlation</th><th>Games</th></tr></thead>
+              <thead><tr>
+                <th style={{ textAlign: 'left' }}>Script</th><th>Correlation</th>
+                <th>vs overall</th><th>Games</th>
+              </tr></thead>
               <tbody>
-                {data.script_sensitivity.map((s) => (
-                  <tr key={s.script}>
-                    <td style={{ textAlign: 'left' }}>{s.script}</td>
-                    <td>{s.phi > 0 ? '+' : ''}{s.phi}</td>
-                    <td>{s.n}</td>
-                  </tr>
-                ))}
+                {data.script_sensitivity.map((s) => {
+                  // The caption promises "where a relationship changes", which is
+                  // only visible against the unconditional number. Without this
+                  // column every row looks equally noteworthy.
+                  const base = data.pairs?.[0]?.phi;
+                  const move = base == null ? null : s.phi - base;
+                  return (
+                    <tr key={s.script}>
+                      <td style={{ textAlign: 'left' }} title={s.description || undefined}>
+                        {s.script}
+                      </td>
+                      <td>{s.phi > 0 ? '+' : ''}{s.phi}</td>
+                      <td style={{ color: move == null || Math.abs(move) < 0.1
+                            ? undefined : move > 0 ? 'var(--pos)' : 'var(--neg)' }}>
+                        {move == null ? '—' : `${move > 0 ? '+' : ''}${move.toFixed(2)}`}
+                      </td>
+                      <td>{s.n}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

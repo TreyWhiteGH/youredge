@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import text
 
 from youredge.db import get_engine
+from youredge.scripts.forecast import game_surface
 from youredge.ingest.resolve import normalize_name
 
 router = APIRouter(tags=["games"])
@@ -315,3 +316,18 @@ async def game_odds(
         "books": sorted(board.values(), key=lambda b: (not b["is_live_book"], b["bookmaker"])),
         "movement": movement,
     }
+
+
+@router.get("/games/{game_id}/scripts")
+async def game_scripts(game_id: str):
+    """The Game Tag Surface: likely script shapes, and each side's tendencies.
+
+    Empirical, not simulated — base rates conditioned on this game's closing
+    line, with the sample and the conditioning level returned alongside every
+    number so a league average is never mistaken for a read on this game.
+    """
+    async with get_engine().connect() as conn:
+        surface = await game_surface(conn, game_id)
+    if not surface:
+        raise HTTPException(status_code=404, detail=f"unknown game {game_id}")
+    return surface

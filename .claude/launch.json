@@ -5,7 +5,7 @@
       "name": "web-worktree",
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev"],
-      "port": 5173
+      "autoPort": true
     }
   ]
 }

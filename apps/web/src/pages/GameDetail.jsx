@@ -16,11 +16,77 @@ import { useTrackVisit } from '../lib/store';
 import { american, kickoffFull, pct, relativeTime, spread } from '../lib/format';
 import { Card, CardHead, Empty, ErrorState, Loading, Notice, RankBar, Section, Stat } from '../components/ui';
 
+/* The Game Tag Surface. Two claims, kept visibly apart: how this game tends to
+   go given its line, and what each side tends to do. Neither is a projection —
+   both are counts, and the sample and conditioning level travel with every
+   number so a league average is never mistaken for a read on this game. */
+function ScriptSurface({ data }) {
+  const scripts = (data.scripts || []).filter((s) => s.probability > 0);
+  if (!scripts.length && !(data.teams || []).some((t) => t.tendencies?.length)) return null;
+  const pct = (x) => `${(x * 100).toFixed(0)}%`;
+  return (
+    <Section title="Script surface"
+      sub={`How games with this line have gone, and what each side tends to do. ${
+        data.spread != null ? `Line ${data.spread > 0 ? '+' : ''}${data.spread} / ${data.total}` : ''}`}>
+      <div className="grid grid-auto" style={{ gap: 12 }}>
+        <Card className="card-pad col" style={{ gap: 10 }}>
+          <span className="small muted">Likely shape</span>
+          {scripts.map((s) => {
+            /* Lift is the honest part: without it a 32% sitting on a 31% base
+               reads like a finding instead of the league average. */
+            const strong = s.lift_vs_base != null && Math.abs(s.lift_vs_base - 1) >= 0.25;
+            return (
+              <div key={s.script} className="col" style={{ gap: 3 }}>
+                <span className="row" style={{ gap: 8 }}>
+                  <strong style={{ fontSize: 12.5 }}>{s.script}</strong>
+                  <span style={{ flex: 1 }} />
+                  <span className="num" style={{ fontSize: 12.5 }}>{pct(s.probability)}</span>
+                </span>
+                <div style={{ height: 4, background: 'var(--surface-2)', borderRadius: 2 }}>
+                  <div style={{ width: `${Math.min(100, s.probability * 200)}%`, height: '100%',
+                    borderRadius: 2,
+                    background: strong ? 'var(--accent)' : 'var(--text-faint)' }} />
+                </div>
+                <span className="small muted">
+                  league {pct(s.league_base_rate)}
+                  {s.lift_vs_base != null && <> · {s.lift_vs_base}× </>}
+                  · n={s.n} · {s.basis}
+                </span>
+              </div>
+            );
+          })}
+        </Card>
+
+        {(data.teams || []).map((t) => (
+          <Card key={t.side} className="card-pad col" style={{ gap: 8 }}>
+            <span className="small muted">{t.name} · last {t.games} games</span>
+            {t.tendencies?.length ? t.tendencies.map((d) => (
+              <span key={d.diagnostic} className="row" style={{ gap: 8 }}>
+                <span style={{ fontSize: 12.5 }}>{d.diagnostic}</span>
+                <span style={{ flex: 1 }} />
+                <span className="num small">{pct(d.rate)}</span>
+                <span className="small muted" style={{ minWidth: 44, textAlign: 'right' }}>
+                  {d.n}/{d.of}
+                </span>
+              </span>
+            )) : <Empty icon={Icon.Activity} title="No diagnosed games yet"
+                   body="This team has no finished games in the window." />}
+          </Card>
+        ))}
+      </div>
+      <div className="small muted" style={{ marginTop: 10, lineHeight: 1.55 }}>
+        {data.basis_note}
+      </div>
+    </Section>
+  );
+}
+
 export default function GameDetail() {
   const { league, gameId } = useParams();
 
   const game = useApi(`game:${gameId}`, (s) => api.getGame(league, gameId, { signal: s }));
   const odds = useApi(`odds:${gameId}`, (s) => api.getGameOdds(league, gameId, {}, { signal: s }));
+  const scripts = useApi(`scripts:${gameId}`, (s) => api.getGameScripts(league, gameId, { signal: s }));
 
   const g = game.data;
   useTrackVisit(g && {
@@ -60,6 +126,8 @@ export default function GameDetail() {
       </div>
 
       <Conditions cond={cond} />
+
+      {scripts.data && <ScriptSurface data={scripts.data} />}
 
       <Section title="Unit matchup" sub="Both teams ranked against the same league field, 2023–2025.">
         <div className="grid" style={{ gridTemplateColumns: 'repeat(auto-fit, minmax(330px, 1fr))' }}>

@@ -88,6 +88,8 @@ export const getGame = (league, gameId, o) =>
   request(`/${league}/games/${encodeURIComponent(gameId)}`, o);
 export const getGameOdds = (league, gameId, params, o) =>
   request(`/${league}/games/${encodeURIComponent(gameId)}/odds`, { params, ...o });
+export const getGameScripts = (league, gameId, o) =>
+  request(`/${league}/games/${encodeURIComponent(gameId)}/scripts`, o);
 
 /* ── Team surfaces ── */
 const team = (league, id, suffix = '') =>

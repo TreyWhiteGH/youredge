@@ -136,11 +136,11 @@ export function tierLabel(rank, of) {
 /** The single colour scale in the app. Percentile in, CSS variable out. */
 export function scaleColor(p) {
   if (p === null || p === undefined) return 'var(--text-faint)';
-  if (p >= 0.78) return 'var(--good)';
-  if (p >= 0.56) return 'var(--accent)';
-  if (p >= 0.34) return 'var(--text-secondary)';
-  if (p >= 0.16) return 'var(--warn)';
-  return 'var(--bad)';
+  if (p >= 0.78) return 'var(--rank-best)';
+  if (p >= 0.56) return 'var(--rank-high)';
+  if (p >= 0.34) return 'var(--rank-mid)';
+  if (p >= 0.16) return 'var(--rank-low)';
+  return 'var(--rank-worst)';
 }
 
 /**

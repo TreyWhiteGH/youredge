@@ -35,6 +35,20 @@ log = logging.getLogger(__name__)
 # backfilled from a session when there is one to backfill from.
 LOCAL_USER = "local"
 
+# Re-running a critique is a normal thing to do -- adjust a leg, look again --
+# and each run would otherwise write another row for the same slip. That is
+# harmless for CLV and quietly corrupting for the haircut fit, where one
+# indecisive session would outweigh ten decisive ones. Same game, book, legs and
+# quote inside an hour is the same slip.
+_RECENT_DUPLICATE = text("""
+    SELECT 1 FROM user_bets
+    WHERE game_id = :gid AND bookmaker = :book AND mode = :mode
+      AND legs = CAST(:legs AS jsonb)
+      AND quoted_price_american IS NOT DISTINCT FROM :quoted
+      AND created_at > now() - interval '1 hour'
+    LIMIT 1
+""")
+
 _INSERT = text("""
     INSERT INTO user_bets (user_id, game_id, bookmaker, mode, legs,
                            quoted_price_american, fair_prob_at_rec, edge_at_rec)
@@ -103,7 +117,11 @@ async def record(conn, result: dict[str, Any], *, league: str, sportsbook: str,
                 "quotable": l["pricing"].get("quotable")}
                for l in priced]
 
+    keys = {"gid": result["game_id"], "book": sportsbook, "mode": mode,
+            "legs": json.dumps(payload), "quoted": quoted}
     try:
+        if (await conn.execute(_RECENT_DUPLICATE, keys)).first() is not None:
+            return None
         bet_id = (await conn.execute(_INSERT, {
             "user": LOCAL_USER, "gid": result["game_id"], "book": sportsbook,
             "mode": mode, "legs": json.dumps(payload),

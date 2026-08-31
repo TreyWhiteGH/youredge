@@ -34,6 +34,7 @@ from youredge.db import get_engine
 from youredge.legs.critique import parse_leg
 from youredge.pricing import sgp as sgp_model
 from youredge.pricing.fair_value import price_leg
+from youredge.pricing.implications import analyse
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +43,12 @@ BOOKS = ("draftkings", "fanduel")
 # Each entry is (label, what it is testing, leg builder). The label is what makes
 # a disagreement interpretable: "conflict" missing by 30% means something quite
 # different from "correlated pair" missing by 30%.
+# Offsets from the main total, used to reach for a line the entailment does not
+# already settle. Every combination available off the main numbers collapses to
+# two legs of risk -- which is why the first fifteen quotes produced no
+# observation at three, and why the margin there is still a prior.
+_ALT_TOTAL_STEPS = (0, 6, 10, -6)
+
 DESIGNS = [
     ("pair/correlated", "spread + over: the classic reinforcing pair",
      lambda h, a, sp, tot, ht, at: [f"{h} {sp:+g}", f"over {tot}"]),
@@ -207,6 +214,55 @@ async def build(league: str, limit: int, as_csv: bool, repeat: bool) -> None:
                     "game_id": g["game_id"],
                     "league": g["league"],
                 })
+
+    # Reach for slips that carry three and four legs of genuine risk, by walking
+    # the total away from its main number until entailment stops collapsing the
+    # slip. Which offset works is not worked out in algebra -- that has been
+    # wrong once already -- but by asking the same checker the estimate uses.
+    async with engine.connect() as conn:
+        for g in games:
+            if g["home_tt"] is None:
+                continue
+            have = {r["design"] for r in rows if r["game"].endswith(g["home_abbr"])}
+            for step in _ALT_TOTAL_STEPS:
+                if any(d.startswith("genuine") for d in have):
+                    break
+                alt = float(g["total"]) + step
+                candidate = [f"{g['home_abbr']} {g['spread']:+g}",
+                             f"over {alt}",
+                             f"{g['home_abbr']} team total over {g['home_tt']}"]
+                priced, missing = [], []
+                for r in candidate:
+                    leg = await parse_leg(conn, g["game_id"], r)
+                    if not leg:
+                        missing.append(r); continue
+                    p = await price_leg(conn, g["game_id"], leg["market_key"],
+                                        leg["outcome"], leg["line"], "draftkings",
+                                        subject=leg.get("subject"))
+                    if p.fair_prob is None:
+                        missing.append(r); continue
+                    priced.append({**leg, "raw": r, "fair_prob": p.fair_prob})
+                if missing or len(priced) < 3:
+                    continue
+                if analyse(priced)["entailed"]:
+                    continue                      # still collapses; try further out
+                est = {b: await sgp_model.estimate(conn, league, b, priced)
+                       for b in BOOKS}
+                first = est[BOOKS[0]]
+                rows.append({
+                    "game": f"{g['away_abbr']} @ {g['home_abbr']}",
+                    "kickoff": g["kickoff"].strftime("%a %d %b %H:%M"),
+                    "design": "genuine/three-risk",
+                    "legs": " | ".join(l["raw"] for l in priced),
+                    "n": 3,
+                    "independence": first["independence_price"],
+                    "fair": first["fair_price"], "corr": first["correlation_multiplier"],
+                    **{f"est_{b}": est[b]["estimated_book_price"] for b in BOOKS},
+                    "margin_basis": first["margin"]["basis"],
+                    "actual_draftkings": "", "actual_fanduel": "",
+                    "game_id": g["game_id"], "league": g["league"],
+                })
+                break
 
     if not rows:
         log.warning("no games with both a spread and a total quoted yet")

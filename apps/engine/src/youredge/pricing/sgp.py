@@ -31,6 +31,8 @@ from typing import Any, Sequence
 
 from sqlalchemy import text
 
+from youredge.pricing.implications import entailed
+
 log = logging.getLogger(__name__)
 
 # Per-leg hold used until a book has enough observed quotes to fit. Books charge
@@ -64,9 +66,21 @@ async def estimate_joint(conn, league: str,
     """Independence, the correlation correction, and the bounded joint."""
     import math
 
-    probs = [float(l["fair_prob"]) for l in legs]
+    # A leg that cannot fail given the others contributes a probability of one,
+    # and must not contribute a correlation term either -- pairing a certainty
+    # with anything produces a lift that is really just the certainty. Removing
+    # it before any of the arithmetic is what makes a three-leg slip price as
+    # its two-leg core, which is what the books do.
+    implied = entailed(legs)
+    core = [l for i, l in enumerate(legs) if i not in implied]
+    if len(core) < 2:
+        core = list(legs)
+        implied = {}
+
+    probs = [float(l["fair_prob"]) for l in core]
     independence = math.prod(probs)
     n = len(probs)
+    legs = core
 
     pairs, log_lift = [], 0.0
     for i in range(n):
@@ -102,6 +116,7 @@ async def estimate_joint(conn, league: str,
         "frechet_low": round(lo, 6), "frechet_high": round(hi, 6),
         "pairs": pairs,
         "pairs_used": sum(1 for p in pairs if p["used"]),
+        "entailed_legs": list(implied.values()),
     }
 
 
@@ -163,11 +178,17 @@ async def estimate(conn, league: str, book: str,
         return {"error": "a parlay needs at least two priced legs"}
 
     j = await estimate_joint(conn, league, legs)
-    m = await book_margin(conn, book, len(legs))
+    # The margin is charged on the legs that carry risk. A free leg does not
+    # make a book hold more, so counting it here would reintroduce through the
+    # margin exactly what the implication check just removed.
+    n_priced = len(legs) - len(j["entailed_legs"])
+    m = await book_margin(conn, book, max(n_priced, 2))
     quoted_prob = min(j["joint"] * (1 + m["margin"]), 0.999)
 
     return {
         "legs": len(legs),
+        "legs_carrying_risk": n_priced,
+        "entailed_legs": j["entailed_legs"],
         "independence_price": prob_to_american(j["independence"]),
         "fair_price": prob_to_american(j["joint"]),
         "estimated_book_price": prob_to_american(quoted_prob),

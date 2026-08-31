@@ -28,6 +28,7 @@ import argparse
 import asyncio
 import csv
 import logging
+import os
 import sys
 
 from youredge.db import get_engine
@@ -92,7 +93,37 @@ async def record_one(conn, league: str, game_id: str, book: str,
     }
 
 
+# The container sees only what docker-compose mounts into it, which is ./data
+# from the repo root. A path that is perfectly valid on the host — an absolute
+# one, or Downloads — simply does not exist inside, and "no such file" is a
+# baffling answer when the file is plainly right there in the editor. So a name
+# that does not resolve is retried against the mount before giving up, and the
+# failure says what the mount actually contains.
+_MOUNT = "/app/data"
+
+
+def resolve(path: str) -> str:
+    if os.path.exists(path):
+        return path
+    candidate = os.path.join(_MOUNT, os.path.basename(path))
+    if os.path.exists(candidate):
+        log.info("reading %s (resolved from %r)", candidate, path)
+        return candidate
+    have = (sorted(f for f in os.listdir(_MOUNT) if f.endswith(".csv"))
+            if os.path.isdir(_MOUNT) else [])
+    sys.exit(
+        f"cannot find {path!r}.\n"
+        f"This runs inside the container, which only sees the repo's data/ "
+        f"folder as {_MOUNT}.\n"
+        + (f"CSVs there: {', '.join(have)}" if have else
+           f"No CSVs in {_MOUNT} yet — write the sheet with:\n"
+           f"  docker compose run --rm ingest python -m youredge.scripts.sgp_sheet "
+           f"--csv > data/sgp_sheet.csv")
+    )
+
+
 async def from_csv(path: str) -> list[dict]:
+    path = resolve(path)
     out = []
     async with get_engine().begin() as conn:
         with open(path) as fh:
@@ -161,7 +192,8 @@ async def main(args) -> None:
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     ap = argparse.ArgumentParser()
-    ap.add_argument("--file", help="a sheet CSV with actual_* columns filled in")
+    ap.add_argument("--file", help="a sheet CSV with actual_* columns filled in; "
+                                   "a bare name is looked up in the repo's data/ folder")
     ap.add_argument("--game")
     ap.add_argument("--book", choices=BOOKS)
     ap.add_argument("--price", help="the book's quote, e.g. +265")

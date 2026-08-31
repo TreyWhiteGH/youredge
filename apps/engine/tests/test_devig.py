@@ -164,3 +164,26 @@ def test_power_refuses_a_market_that_is_not_one():
     assert solve_power((0.9990, 0.9615)) is None
     assert solve_power((0.5, 1.0)) is None
     assert solve_power((0.0, 0.5)) is None
+
+
+def test_freshness_tightens_toward_kickoff():
+    """A price's shelf life depends on how close the game is.
+
+    One flat threshold has to be wrong at one end: generous enough for a game
+    three days out is far too generous inside the last hour, when the line has
+    moved twice since.
+    """
+    from youredge.pricing.fair_value import stale_after
+
+    last_hour = stale_after(0.5)
+    inside_three = stale_after(2)
+    same_day = stale_after(12)
+    days_out = stale_after(72)
+
+    assert last_hour < inside_three < same_day < days_out
+    assert last_hour <= 20 * 60
+    # A game already under way, or one with no kickoff, falls back to the
+    # loosest setting rather than to zero — a missing kickoff must not silently
+    # mark every quote stale.
+    assert stale_after(None) == days_out
+    assert stale_after(-3) == days_out

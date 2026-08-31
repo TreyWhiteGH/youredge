@@ -30,6 +30,9 @@ log = logging.getLogger(__name__)
 # left unpriced simply because Pinnacle skipped the game.
 ANCHOR_BOOKS = ("pinnacle", "betmgm", "fanduel", "draftkings", "caesars")
 
+# Where to look when the main market does not quote the requested line.
+_ALTERNATE_OF = {"totals": "alternate_totals", "spreads": "alternate_spreads"}
+
 # Past this the number describes a market that has moved on — and how long that
 # takes depends entirely on how close kickoff is. A line six hours old on a
 # Thursday game is the same line; six hours before kickoff it is two moves
@@ -123,6 +126,20 @@ async def price_leg(
     rows = (await conn.execute(
         _LATEST, {"gid": game_id, "mkey": market_key,
                   "subject": subject})).mappings().all()
+
+    # A book posts one main number and a ladder of alternates in a separate
+    # market. "over 51.5" is a perfectly ordinary thing to ask for on a game
+    # whose main total is 44.5, and looking only at the main market answers "not
+    # quoted" for a line the book is plainly offering. Fall through to the
+    # ladder when the main market has nothing at the requested number.
+    if line is not None and market_key in _ALTERNATE_OF:
+        if not any(r["line"] is not None
+                   and abs(abs(r["line"]) - abs(line)) < 0.01 for r in rows):
+            alt = (await conn.execute(
+                _LATEST, {"gid": game_id, "mkey": _ALTERNATE_OF[market_key],
+                          "subject": subject})).mappings().all()
+            if alt:
+                rows = alt
 
     def matches(r, want_outcome: str) -> bool:
         if r["outcome"].lower() != want_outcome.lower():

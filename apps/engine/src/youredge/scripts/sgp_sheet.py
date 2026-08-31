@@ -105,6 +105,7 @@ async def build(league: str, limit: int, as_csv: bool) -> None:
         for g in games:
             if g["spread"] is None or g["total"] is None:
                 continue
+            seen: set[tuple[str, ...]] = set()
             for label, purpose, build_legs in DESIGNS:
                 if "team total" in label and (g["home_tt"] is None
                                               or g["away_tt"] is None):
@@ -125,8 +126,17 @@ async def build(league: str, limit: int, as_csv: bool) -> None:
                         missing.append(r)
                         continue
                     priced.append({**leg, "raw": r, "fair_prob": p.fair_prob})
-                if len(priced) < 2:
+                # A design that lost a leg is no longer that design. TB @ CIN
+                # has no game total quoted, so three separate rows collapsed to
+                # the same two legs and printed under three different labels --
+                # which invites three checks of one slip and reads as agreement
+                # between designs that were never run.
+                if missing or len(priced) < 2:
                     continue
+                slip = tuple(l["raw"] for l in priced)
+                if slip in seen:
+                    continue
+                seen.add(slip)
                 est = {}
                 for book in BOOKS:
                     est[book] = await sgp_model.estimate(
@@ -143,7 +153,14 @@ async def build(league: str, limit: int, as_csv: bool) -> None:
                     "corr": first["correlation_multiplier"],
                     **{f"est_{b}": est[b]["estimated_book_price"] for b in BOOKS},
                     "margin_basis": first["margin"]["basis"],
-                    "dropped": " | ".join(missing) or "",
+                    # Filled in by hand from the book, then read back by
+                    # scripts.sgp_record. Empty is the normal state of a fresh
+                    # sheet; a row with neither price set is simply skipped on
+                    # load rather than treated as a zero.
+                    "actual_draftkings": "",
+                    "actual_fanduel": "",
+                    "game_id": g["game_id"],
+                    "league": g["league"],
                 })
 
     if not rows:

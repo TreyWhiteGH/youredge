@@ -23,6 +23,9 @@ from sqlalchemy import text
 from youredge.db import get_engine
 from youredge.legs import ledger_bets
 from youredge.legs.critique import critique as run_critique
+from youredge.legs.critique import parse_leg
+from youredge.pricing import sgp as sgp_model
+from youredge.pricing.fair_value import price_leg
 from youredge.legs.hypothesis import evaluate as run_hypothesis
 
 log = logging.getLogger(__name__)
@@ -48,6 +51,13 @@ class HypothesisRequest(BaseModel):
     game_id: str
     sportsbook: str
     hypothesis: str
+
+
+class EstimateRequest(BaseModel):
+    league: str = Field(pattern="^(nfl|ncaaf)$")
+    game_id: str
+    sportsbook: str
+    legs: list[str]
 
 
 class CritiqueRequest(BaseModel):
@@ -157,6 +167,61 @@ async def critique(req: CritiqueRequest):
     if clv:
         result["recorded"] = clv
     return result
+
+
+@router.post("/sgp/estimate")
+async def estimate_sgp(req: EstimateRequest):
+    """What this slip is worth, and what the book is expected to quote.
+
+    Deliberately separate from Critique, which still refuses to combine legs.
+    Critique reports what is counted; this reports a model's estimate, and the
+    two must not be confused because only one of them can be wrong in a way the
+    data cannot see. The estimate exists to be checked against a real book —
+    that is the point of returning the fair price and the expected quote
+    separately rather than one blended number.
+    """
+    if len(req.legs) < 2:
+        raise HTTPException(status_code=400, detail="need at least two legs")
+
+    async with get_engine().connect() as conn:
+        known = await conn.execute(
+            text("SELECT 1 FROM games WHERE game_id = :gid"), {"gid": req.game_id})
+        if known.first() is None:
+            raise HTTPException(status_code=404, detail=f"unknown game {req.game_id}")
+
+        priced, unparsed = [], []
+        for raw in req.legs:
+            leg = await parse_leg(conn, req.game_id, raw)
+            if not leg:
+                unparsed.append(raw)
+                continue
+            p = await price_leg(conn, req.game_id, leg["market_key"],
+                                leg["outcome"], leg["line"], req.sportsbook)
+            if p.fair_prob is None:
+                unparsed.append(raw)
+                continue
+            priced.append({**leg, "raw": raw, "fair_prob": p.fair_prob,
+                           "stale": p.is_stale})
+
+        if len(priced) < 2:
+            return JSONResponse(status_code=422, content={
+                "error": "fewer than two legs could be priced",
+                "unpriced": unparsed,
+                "detail": ("A leg is left out when it cannot be parsed or when no "
+                           "book is currently quoting it. Estimating around a "
+                           "missing leg would understate the price of the slip "
+                           "actually being asked about."),
+            })
+
+        out = await sgp_model.estimate(conn, req.league, req.sportsbook, priced)
+
+    out["unpriced_legs"] = unparsed
+    # A stale leg poisons the whole estimate, not just its own term, so the
+    # warning belongs at the top level rather than beside the leg.
+    if any(l["stale"] for l in priced):
+        out["warning"] = ("At least one leg is priced off a line old enough to "
+                          "have moved. The estimate stands on those numbers.")
+    return out
 
 
 @router.post("/sgp/save")

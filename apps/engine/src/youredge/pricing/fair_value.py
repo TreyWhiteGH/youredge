@@ -30,8 +30,28 @@ log = logging.getLogger(__name__)
 # left unpriced simply because Pinnacle skipped the game.
 ANCHOR_BOOKS = ("pinnacle", "betmgm", "fanduel", "draftkings", "caesars")
 
-# Past this the number describes a market that has moved on.
-STALE_AFTER_SECONDS = 6 * 3600
+# Past this the number describes a market that has moved on — and how long that
+# takes depends entirely on how close kickoff is. A line six hours old on a
+# Thursday game is the same line; six hours before kickoff it is two moves
+# behind, and inside the last hour a price from thirty minutes ago is already
+# history. One flat threshold has to be wrong at one end or the other, so it is
+# tiered against time to kickoff the way the poller's own schedule is.
+STALE_AFTER_SECONDS = 6 * 3600          # kept: the default beyond a day out
+_FRESHNESS_TIERS = (
+    (1, 20 * 60),        # inside the last hour: 20 minutes
+    (3, 45 * 60),        # inside three: 45 minutes
+    (24, 3 * 3600),      # inside a day: 3 hours
+)
+
+
+def stale_after(hours_to_kickoff: float | None) -> int:
+    """How old a quote may be, for a game this far from kickoff."""
+    if hours_to_kickoff is None or hours_to_kickoff < 0:
+        return STALE_AFTER_SECONDS
+    for cutoff, allowed in _FRESHNESS_TIERS:
+        if hours_to_kickoff <= cutoff:
+            return allowed
+    return STALE_AFTER_SECONDS
 
 
 @dataclass
@@ -47,10 +67,16 @@ class Priced:
     edge: float | None
     captured_at: datetime | None
     stale_seconds: float | None
+    # How old this quote was allowed to be, given how close the game is. Carried
+    # rather than recomputed so a caller rendering "4 min old" can also say what
+    # it was measured against, which is the difference between a number and a
+    # verdict someone can check.
+    stale_after_seconds: int = STALE_AFTER_SECONDS
 
     @property
     def is_stale(self) -> bool:
-        return self.stale_seconds is None or self.stale_seconds > STALE_AFTER_SECONDS
+        return (self.stale_seconds is None
+                or self.stale_seconds > self.stale_after_seconds)
 
 
 def american_to_implied(price: int) -> float:
@@ -121,6 +147,11 @@ async def price_leg(
     captured = mine["captured_at"] if mine else None
     stale = ((datetime.now(timezone.utc) - captured).total_seconds()
              if captured else None)
+    kickoff = (await conn.execute(
+        text("SELECT kickoff FROM games WHERE game_id = :gid"), {"gid": game_id}
+    )).scalar()
+    hours = ((kickoff - datetime.now(timezone.utc)).total_seconds() / 3600
+             if kickoff else None)
 
     return Priced(
         market_key=market_key, outcome=outcome, line=line,
@@ -134,4 +165,5 @@ async def price_leg(
         edge=(fair - book_implied) if (fair is not None and book_implied) else None,
         captured_at=captured,
         stale_seconds=stale,
+        stale_after_seconds=stale_after(hours),
     )

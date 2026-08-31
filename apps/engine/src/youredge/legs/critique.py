@@ -118,6 +118,7 @@ async def critique(conn, game_id: str, league: str, sportsbook: str,
             "book_implied": round(p.book_implied, 4) if p.book_implied else None,
             "edge": round(p.edge, 4) if p.edge is not None else None,
             "stale_seconds": p.stale_seconds,
+            "stale_after_seconds": p.stale_after_seconds,
             # An edge computed off a stale line is not an edge; say so rather
             # than let the number stand on its own.
             "quotable": bool(p.edge is not None and not p.is_stale),

@@ -16,6 +16,7 @@ from fastapi import APIRouter, HTTPException, Query, Request
 from sqlalchemy import text
 
 from youredge.db import get_engine
+from youredge.pricing.fair_value import stale_after
 from youredge.scripts.forecast import game_surface
 from youredge.ingest.resolve import normalize_name
 
@@ -273,14 +274,24 @@ async def _resolve_outcomes(conn, rows: list[dict]) -> dict[str, str]:
 
 
 def _shape_board(rows: list[dict], home: dict, away: dict,
-                 resolved: dict[str, str] | None = None) -> dict[str, dict]:
+                 resolved: dict[str, str] | None = None,
+                 kickoff: datetime | None = None) -> dict[str, dict]:
     """Collapse flat snapshot rows into {bookmaker: {spread, total, moneyline}}.
 
     A side is assigned by exact name, by abbreviation, or by the alias crosswalk — in
     that order. An outcome that matches none of the three is dropped rather than
     guessed at, because attributing a price to the wrong team is worse than omitting it.
+
+    Every book also carries an age and a verdict on it. The board used to return
+    only `captured_at`, which puts the whole judgement on the reader: a timestamp
+    from this morning looks the same whether the game is on Sunday or in ninety
+    minutes. The threshold tightens as kickoff approaches, so the verdict travels
+    with the number it was measured against.
     """
     resolved = resolved or {}
+    hours = ((kickoff - datetime.now(timezone.utc)).total_seconds() / 3600
+             if kickoff else None)
+    allowed = stale_after(hours)
     board: dict[str, dict] = {}
     for r in rows:
         book = board.setdefault(r["bookmaker"], {
@@ -313,6 +324,17 @@ def _shape_board(rows: list[dict], home: dict, away: dict,
             book.setdefault("moneyline", {})[side] = price
         elif r["market_key"] == "totals" and r["outcome"] in ("Over", "Under"):
             book.setdefault("total", {})[r["outcome"].lower()] = price
+
+    now = datetime.now(timezone.utc)
+    for book in board.values():
+        captured = book.get("captured_at")
+        age = (now - captured).total_seconds() if captured else None
+        book["age_seconds"] = age
+        book["stale_after_seconds"] = allowed
+        # None is stale. A book with no timestamp is not a fresh book, and the
+        # only safe reading of "we do not know when this was quoted" is "do not
+        # quote it".
+        book["is_stale"] = age is None or age > allowed
     return board
 
 
@@ -376,7 +398,8 @@ async def list_games(
     for r in rows:
         g = _game_shape(r)
         if odds:
-            board = _shape_board(boards.get(r["game_id"], []), g["home"], g["away"], resolved)
+            board = _shape_board(boards.get(r["game_id"], []), g["home"], g["away"],
+                                 resolved, kickoff=r["kickoff"])
             played = _has_kicked_off(r)
             g["odds"] = _best_book(board, allow_archive=played)
             live = [b for b in board.values() if b["is_live_book"]]
@@ -436,7 +459,8 @@ async def game_detail(request: Request, game_id: str):
         resolved = await _resolve_outcomes(conn, snaps)
 
     game = _game_shape(row)
-    board = _shape_board(snaps, game["home"], game["away"], resolved)
+    board = _shape_board(snaps, game["home"], game["away"], resolved,
+                         kickoff=game.get("kickoff"))
     played = _has_kicked_off(row)
     game["odds"] = _best_book(board, allow_archive=played)
     shown = board.values() if played else [b for b in board.values() if b["is_live_book"]]
@@ -633,7 +657,7 @@ async def game_odds(
 
     home = {"team_id": teams["home_id"], "name": teams["home_name"], "abbr": teams["home_abbr"]}
     away = {"team_id": teams["away_id"], "name": teams["away_name"], "abbr": teams["away_abbr"]}
-    board = _shape_board(snaps, home, away, resolved)
+    board = _shape_board(snaps, home, away, resolved, kickoff=teams.get("kickoff"))
 
     books = sorted(board.values(), key=lambda b: (not b["is_live_book"], b["bookmaker"]))
     archive_count = sum(1 for b in books if not b["is_live_book"])

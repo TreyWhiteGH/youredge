@@ -60,6 +60,7 @@ from youredge.ingest import (
 from youredge.legs import ledger, ledger_bets, pairs
 from youredge.modeling import drives as nfl_drives
 from youredge.modeling import features
+from youredge.pricing import fair_value
 from youredge.scripts import diagnose, game_state, label
 
 log = logging.getLogger(__name__)
@@ -172,6 +173,41 @@ async def catch_up_plays(season: int) -> int:
     return touched
 
 
+# Freshness on a surface is a verdict about one number. This is the other half:
+# whether the thing that produces those numbers is still running at all. A dead
+# poller does not raise anything — it just stops writing, and every board slides
+# quietly out of date while continuing to render a price. Checking from here
+# means the answer arrives in the logs before a user finds it on screen.
+_STALE_BOARDS = text("""
+    SELECT g.game_id,
+           EXTRACT(epoch FROM (g.kickoff - now())) / 3600 AS hours_out,
+           EXTRACT(epoch FROM (now() - max(s.captured_at))) / 60 AS age_min
+    FROM games g
+    JOIN markets m ON m.game_id = g.game_id
+    JOIN odds_snapshots s USING (market_id)
+    WHERE g.status = 'scheduled'
+      AND g.kickoff BETWEEN now() AND now() + interval '24 hours'
+    GROUP BY g.game_id, g.kickoff
+    HAVING EXTRACT(epoch FROM (now() - max(s.captured_at))) > :allowed
+    ORDER BY g.kickoff
+""")
+
+
+async def check_board_freshness() -> int:
+    """Warn when a game close to kickoff has stopped receiving quotes."""
+    async with get_engine().connect() as conn:
+        rows = (await conn.execute(
+            _STALE_BOARDS, {"allowed": fair_value.STALE_AFTER_SECONDS})).mappings().all()
+    for r in rows[:5]:
+        log.warning("stale board: %s kicks off in %.1fh, last quote %.0f min ago",
+                    r["game_id"], r["hours_out"], r["age_min"])
+    if len(rows) > 5:
+        log.warning("...and %d more games with stale boards", len(rows) - 5)
+    if not rows:
+        log.info("boards fresh for every game inside 24 hours")
+    return len(rows)
+
+
 async def repair_swapped_scores() -> bool:
     """Undo CFBD's reversals and overshoots against its own authoritative final.
 
@@ -254,6 +290,7 @@ async def cycle(season: int, *, aliases: bool, force: bool = False) -> None:
         await rebuild_derived()
     async with get_engine().begin() as conn:
         await ledger_bets.settle(conn)
+    await check_board_freshness()
 
 
 async def main(season: int | None, loop: bool, interval: int, force: bool = False):

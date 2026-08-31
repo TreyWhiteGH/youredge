@@ -85,7 +85,11 @@ async def parse_leg(conn, game_id: str, raw: str) -> dict[str, Any] | None:
         ou = "over" if "over" in t else "under"
         return {"template": "TEAM_TOTAL", "side": f"{team}_{ou}",
                 "market_key": "team_totals", "outcome": ou.capitalize(),
-                "line": value}
+                "line": value,
+                # Which team's total, as a canonical id. A book quotes this
+                # market once per side, so the side has to travel with the leg
+                # or the price is a coin toss between the two.
+                "subject": teams[f"{team}_team_id"]}
 
     if team and re.search(r"\b(ml|moneyline|money line|to win)\b", t):
         name = teams[f"{team}_name"]
@@ -110,7 +114,7 @@ async def critique(conn, game_id: str, league: str, sportsbook: str,
     # --- per-leg fair value, which needs no model
     for leg in parsed:
         p = await price_leg(conn, game_id, leg["market_key"], leg["outcome"],
-                            leg["line"], sportsbook)
+                            leg["line"], sportsbook, subject=leg.get("subject"))
         leg["pricing"] = {
             "book": p.book, "book_price": p.book_price,
             "anchor_book": p.anchor_book,

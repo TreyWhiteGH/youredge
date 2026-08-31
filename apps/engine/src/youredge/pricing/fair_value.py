@@ -83,6 +83,10 @@ def american_to_implied(price: int) -> float:
     return -price / (-price + 100) if price < 0 else 100 / (price + 100)
 
 
+# `subject` is what separates one team's total from the other's. Without it both
+# sides of a team-total market reduce to the same (bookmaker, 'Over', line) key
+# and the query returns whichever sorted first — so a leg naming a team was
+# priced off a coin toss between the two, or silently not priced at all.
 _LATEST = text("""
     SELECT DISTINCT ON (m.bookmaker, s.outcome, s.line)
            m.bookmaker, s.outcome, s.line, s.price_american, s.implied_prob,
@@ -91,6 +95,7 @@ _LATEST = text("""
     JOIN odds_snapshots s ON s.market_id = m.market_id
     WHERE m.game_id = :gid AND m.market_key = :mkey
       AND s.price_american IS NOT NULL
+      AND (CAST(:subject AS text) IS NULL OR m.side_team_id = :subject)
     ORDER BY m.bookmaker, s.outcome, s.line, s.captured_at DESC
 """)
 
@@ -108,10 +113,16 @@ def _devig_pair(p_a: float, p_b: float) -> float:
 
 async def price_leg(
     conn, game_id: str, market_key: str, outcome: str, line: float | None,
-    user_book: str,
+    user_book: str, subject: str | None = None,
 ) -> Priced:
-    """Fair value for one leg, anchored on the sharpest book quoting it."""
-    rows = (await conn.execute(_LATEST, {"gid": game_id, "mkey": market_key})).mappings().all()
+    """Fair value for one leg, anchored on the sharpest book quoting it.
+
+    `subject` is a canonical team id, required for markets a book quotes once per
+    side — team totals above all. Without it the two sides are indistinguishable.
+    """
+    rows = (await conn.execute(
+        _LATEST, {"gid": game_id, "mkey": market_key,
+                  "subject": subject})).mappings().all()
 
     def matches(r, want_outcome: str) -> bool:
         if r["outcome"].lower() != want_outcome.lower():

@@ -196,7 +196,8 @@ async def estimate_sgp(req: EstimateRequest):
                 unparsed.append(raw)
                 continue
             p = await price_leg(conn, req.game_id, leg["market_key"],
-                                leg["outcome"], leg["line"], req.sportsbook)
+                                leg["outcome"], leg["line"], req.sportsbook,
+                                subject=leg.get("subject"))
             if p.fair_prob is None:
                 unparsed.append(raw)
                 continue

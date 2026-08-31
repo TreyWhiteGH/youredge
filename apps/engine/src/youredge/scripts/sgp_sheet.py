@@ -47,7 +47,12 @@ BOOKS = ("draftkings", "fanduel")
 # already settle. Every combination available off the main numbers collapses to
 # two legs of risk -- which is why the first fifteen quotes produced no
 # observation at three, and why the margin there is still a prior.
-_ALT_TOTAL_STEPS = (0, 6, 10, -6)
+# Downward first, and that direction is the whole trick. A spread plus a total
+# guarantees the favourite at least (total + margin) / 2 points, so *raising*
+# the total only makes the team-total leg more certainly free. Lowering it drops
+# the guarantee below the posted team total and the leg starts carrying risk
+# again. Going up was tried first and never worked.
+_ALT_TOTAL_STEPS = (-6, -10, -4, -14, 6)
 
 DESIGNS = [
     ("pair/correlated", "spread + over: the classic reinforcing pair",

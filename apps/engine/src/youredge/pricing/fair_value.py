@@ -150,25 +150,42 @@ async def price_leg(
         # negated number.
         return r["line"] is not None and abs(abs(r["line"]) - abs(line)) < 0.01
 
-    by_book: dict[str, dict[str, dict]] = {}
-    for r in rows:
-        by_book.setdefault(r["bookmaker"], {})[r["outcome"].lower()] = r
+    # Keyed on outcome *and* line, because a market can be a ladder. Keying on
+    # outcome alone kept only the last row per side, so a request for over 46.5
+    # was compared against whichever alternate happened to sort last and matched
+    # nothing — which is why no slip carrying three legs of real risk could be
+    # constructed: every one of them needs a total off the main number.
+    def key(r) -> tuple[str, float | None]:
+        return (r["outcome"].lower(),
+                None if r["line"] is None else abs(round(float(r["line"]), 2)))
 
-    # The other side of this leg, needed to strip the vig.
+    by_book: dict[str, dict[tuple, dict]] = {}
+    for r in rows:
+        by_book.setdefault(r["bookmaker"], {})[key(r)] = r
+
+    want_line = None if line is None else abs(round(float(line), 2))
     sides = {r["outcome"].lower() for r in rows}
     other = next((s for s in sides if s != outcome.lower()), None)
+
+    def at(quotes: dict, side: str) -> dict | None:
+        """That side of this rung. Falls back to the sole quote when the market
+        carries no line at all, which is how moneylines arrive."""
+        if want_line is not None:
+            return quotes.get((side, want_line))
+        found = [v for k, v in quotes.items() if k[0] == side]
+        return found[0] if found else None
 
     fair = anchor = None
     if other:
         for book in ANCHOR_BOOKS:
             quotes = by_book.get(book, {})
-            a, b = quotes.get(outcome.lower()), quotes.get(other)
+            a, b = at(quotes, outcome.lower()), at(quotes, other)
             if a and b and matches(a, outcome) and a["implied_prob"] and b["implied_prob"]:
                 fair = _devig_pair(a["implied_prob"], b["implied_prob"])
                 anchor = book
                 break
 
-    mine = by_book.get(user_book, {}).get(outcome.lower())
+    mine = at(by_book.get(user_book, {}), outcome.lower())
     if mine and not matches(mine, outcome):
         mine = None
     book_implied = mine["implied_prob"] if mine else None

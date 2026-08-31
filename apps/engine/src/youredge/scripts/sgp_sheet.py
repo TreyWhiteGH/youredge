@@ -91,17 +91,62 @@ _GAMES = text("""
     JOIN teams at ON at.team_id = g.away_team_id
     WHERE g.status = 'scheduled' AND g.kickoff > now()
       AND g.league = :league
+      -- Games already quoted are dropped by default. Ordering by kickoff and
+      -- taking the first few handed back the same games every run, so a second
+      -- sheet asked for work already done and answered no new question.
+      AND (:repeat OR g.game_id NOT IN (SELECT game_id FROM user_bets))
     ORDER BY g.kickoff
-    LIMIT :lim
+    LIMIT :pool
 """)
 
 
-async def build(league: str, limit: int, as_csv: bool) -> None:
+def spread_of(g) -> float:
+    return abs(float(g["spread"])) if g["spread"] is not None else 0.0
+
+
+def diversify(games: list, want: int) -> list:
+    """Pick games across spread buckets rather than the next few on the calendar.
+
+    The open question is whether leg correlation changes with the matchup, and
+    the line is the market's summary of that. A sheet drawn from one week's
+    nearest kickoffs is nearly all pick'ems, which is precisely where the
+    league-average lift is already accurate — so it cannot answer the question
+    however many rows it has.
+    """
+    buckets: dict[str, list] = {}
+    for g in games:
+        sp = spread_of(g)
+        key = ("pickem" if sp <= 3 else "short" if sp <= 7
+               else "mid" if sp <= 14 else "big")
+        buckets.setdefault(key, []).append(g)
+    order = ["big", "mid", "short", "pickem"]      # rarest first
+    out, i = [], 0
+    while len(out) < want and any(buckets.values()):
+        key = order[i % len(order)]
+        if buckets.get(key):
+            out.append(buckets[key].pop(0))
+        i += 1
+        if i > len(order) * (want + len(games)):
+            break
+    return out
+
+
+async def build(league: str, limit: int, as_csv: bool, repeat: bool) -> None:
     engine = get_engine()
     rows = []
     async with engine.connect() as conn:
-        games = (await conn.execute(
-            _GAMES, {"league": league, "lim": limit})).mappings().all()
+        pool = (await conn.execute(_GAMES, {
+            "league": league, "pool": max(limit * 8, 40), "repeat": repeat,
+        })).mappings().all()
+        priced_pool = [g for g in pool
+                       if g["spread"] is not None and g["total"] is not None]
+        games = diversify(priced_pool, limit)
+        if not games:
+            log.warning("no unquoted games with a spread and total left; "
+                        "pass --repeat to sample games already recorded")
+            return
+        log.info("spreads on this sheet: %s",
+                 ", ".join(f"{spread_of(g):g}" for g in games))
         for g in games:
             if g["spread"] is None or g["total"] is None:
                 continue
@@ -193,5 +238,7 @@ if __name__ == "__main__":
     ap.add_argument("--league", default="nfl", choices=("nfl", "ncaaf"))
     ap.add_argument("--games", type=int, default=4)
     ap.add_argument("--csv", action="store_true")
+    ap.add_argument("--repeat", action="store_true",
+                    help="include games already recorded in user_bets")
     args = ap.parse_args()
-    asyncio.run(build(args.league, args.games, args.csv))
+    asyncio.run(build(args.league, args.games, args.csv, args.repeat))

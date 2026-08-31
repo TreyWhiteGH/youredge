@@ -121,48 +121,58 @@ async def estimate_joint(conn, league: str,
 
 
 _FIT = text("""
-    SELECT jsonb_array_length(legs) AS n_legs,
-           quoted_price_american AS quoted,
-           legs
+    SELECT game_id, quoted_price_american AS quoted, legs
     FROM user_bets
     WHERE bookmaker = :book AND quoted_price_american IS NOT NULL
-      AND fair_prob_at_rec IS NOT NULL
 """)
 
 
-async def book_margin(conn, book: str, n_legs: int) -> dict[str, Any]:
+async def book_margin(conn, league: str, book: str, n_legs: int) -> dict[str, Any]:
     """What this book charges over the joint, measured if possible.
 
-    Measured against the *joint*, not against independence: a margin fitted
-    against the wrong reference absorbs the correlation into itself and stops
-    being a margin at all.
+    Measured against the *joint*, and that distinction is not pedantic. Fitting
+    against independence produced a "margin" of 120% for DraftKings at three
+    legs — no book holds 120%. What it had actually absorbed was the
+    correlation, and on slips whose third leg is free it absorbed the entailment
+    too: independence over three legs is tiny while the book is pricing a
+    two-leg bet, so the ratio exploded and every estimate that used it came out
+    far too short.
+
+    So each stored slip is re-run through the same joint estimate a live request
+    gets, entailment included, and cells are keyed on the number of legs that
+    actually carry risk rather than the number typed in.
     """
     prior = (1 + PRIOR_LEG_MARGIN) ** n_legs - 1
-    rows = [r for r in (await conn.execute(_FIT, {"book": book})).mappings().all()
-            if r["n_legs"] == n_legs]
-    if len(rows) < MIN_QUOTES_TO_FIT:
-        return {"margin": prior, "basis": "prior", "n_quotes": len(rows),
-                "detail": (f"{len(rows)} observed quotes for {n_legs} legs at "
-                           f"{book}; {MIN_QUOTES_TO_FIT} needed before the prior "
-                           "is replaced by a measurement")}
+    rows = (await conn.execute(_FIT, {"book": book})).mappings().all()
+
     ratios = []
     for r in rows:
-        implied = (-r["quoted"] / (-r["quoted"] + 100) if r["quoted"] < 0
-                   else 100 / (r["quoted"] + 100))
-        # Stored legs carry their fair probs, so the joint can be recomputed
-        # rather than assumed to be what it was on the day.
-        probs = [float(l["fair_prob"]) for l in r["legs"] if l.get("fair_prob")]
-        if len(probs) != n_legs:
+        legs = [l for l in r["legs"] if l.get("fair_prob")]
+        if len(legs) < 2:
             continue
-        import math
-        indep = math.prod(probs)
-        if indep > 0:
-            ratios.append(implied / indep - 1)
+        j = await estimate_joint(conn, league, legs)
+        risk = len(legs) - len(j["entailed_legs"])
+        if risk != n_legs or not j["joint"]:
+            continue
+        q = r["quoted"]
+        implied = (-q / (-q + 100)) if q < 0 else (100 / (q + 100))
+        ratios.append(implied / j["joint"] - 1)
+
     if len(ratios) < MIN_QUOTES_TO_FIT:
-        return {"margin": prior, "basis": "prior", "n_quotes": len(ratios)}
+        return {"margin": prior, "basis": "prior", "n_quotes": len(ratios),
+                "detail": (f"{len(ratios)} observed quotes carrying {n_legs} "
+                           f"legs of risk at {book}; {MIN_QUOTES_TO_FIT} needed "
+                           "before the prior is replaced by a measurement")}
     ratios.sort()
-    return {"margin": ratios[len(ratios) // 2], "basis": "fitted",
-            "n_quotes": len(ratios)}
+    fitted = ratios[len(ratios) // 2]
+    # A book cannot hold half the pool. A fit that says so is measuring
+    # something other than margin, and the prior is the safer wrong answer.
+    if not 0 <= fitted <= 0.5:
+        log.warning("%s at %d legs fitted an implausible margin of %.2f; "
+                    "keeping the prior", book, n_legs, fitted)
+        return {"margin": prior, "basis": "prior_implausible_fit",
+                "n_quotes": len(ratios), "rejected_fit": round(fitted, 4)}
+    return {"margin": fitted, "basis": "fitted", "n_quotes": len(ratios)}
 
 
 def prob_to_american(p: float) -> int | None:
@@ -182,7 +192,7 @@ async def estimate(conn, league: str, book: str,
     # make a book hold more, so counting it here would reintroduce through the
     # margin exactly what the implication check just removed.
     n_priced = len(legs) - len(j["entailed_legs"])
-    m = await book_margin(conn, book, max(n_priced, 2))
+    m = await book_margin(conn, league, book, max(n_priced, 2))
     quoted_prob = min(j["joint"] * (1 + m["margin"]), 0.999)
 
     return {

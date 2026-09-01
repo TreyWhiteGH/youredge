@@ -6,16 +6,27 @@ box is disposable and the database is not, because `odds_snapshots` records line
 movement that cannot be re-fetched at any price and `user_bets` holds quotes
 collected by hand from sportsbooks.
 
-Roughly 45 minutes end to end, most of it waiting for a restore.
+Hetzner CPX31 in Ashburn for the compute, Neon for Postgres. Roughly 45 minutes
+end to end, most of it waiting for a restore.
+
+Running cost is about **$19-25/mo** for the box, **~$19/mo** for a 10 GB Neon
+tier and **~$12/yr** for the domain. Once the reasoning layer is in, the
+Anthropic bill will make all three a rounding error -- which is the real reason
+not to spend long optimising this part.
 
 ---
 
 ## 1. Database first
 
-Create a Postgres 16 instance at **Neon** or **Supabase**. Pick a US East
-region — nflverse, CFBD and The Odds API are all US-hosted and the poller is
-chatty. You need about 10 GB; the dump is 126 MB but restores to ~3 GB and
-grows with every poll.
+Create a Postgres 16 instance at **Neon**, region **AWS us-east**, to sit near
+the Ashburn box. You need about 10 GB: the dump is 126 MB but restores to ~3 GB
+and grows with every poll.
+
+Neon over Hetzner's own managed Postgres deliberately. IONOS and most hosts keep
+write-ahead logs for seven days, and the failure this data actually faces is not
+a dead disk -- it is a bad migration or a `--rebuild` against the wrong URL,
+which you might not notice in a week. Neon also branches, so a migration can be
+tested against a copy of production before it touches production.
 
 Restore your backup into it:
 
@@ -50,8 +61,24 @@ you work.
 
 ## 3. The box
 
-Hetzner CPX31 (4 vCPU, 8 GB, 160 GB, Ashburn) is about €14/mo and is more
-machine than this needs. DigitalOcean's equivalent is ~$48 in NYC.
+**Hetzner Cloud, CPX31, Ashburn (us-east)** — 4 vCPU, 8 GB, 160 GB NVMe, 3 TB
+traffic, IPv4 included. Around $19-25/mo after the 2026 price rise; check the
+figure at checkout rather than trusting this file. It is more machine than this
+needs today and leaves room for the mining jobs.
+
+Ubuntu 24.04. In the Hetzner console, add an SSH key at creation — password
+login on a fresh public IP is found by scanners within minutes.
+
+Attach a **cloud firewall** (free, and applied outside the machine so a
+misconfigured host cannot undo it):
+
+| Direction | Port | Source |
+|---|---|---|
+| inbound | 22 | your IP only |
+| inbound | 80, 443 | anywhere |
+
+Nothing else. Postgres is not on this box and nothing here listens on 5432 —
+if you ever find yourself opening that port, something has gone wrong.
 
 ```bash
 ssh root@YOUR_IP
@@ -59,8 +86,10 @@ apt update && apt install -y docker.io docker-compose-plugin git
 git clone https://github.com/TreyWhiteGH/youredge.git && cd youredge
 ```
 
-Do not open Postgres ports; nothing here listens on 5432. Only 80 and 443 need
-to be reachable.
+Hetzner's Ashburn region and Neon's `aws-us-east-2` are both US East, which
+keeps the engine a few milliseconds from its database. Putting the box in
+Europe and the database in Virginia would add a transatlantic round trip to
+every query, and this engine issues a lot of small ones.
 
 ## 4. Configure
 

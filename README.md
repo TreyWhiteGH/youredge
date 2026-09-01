@@ -274,6 +274,136 @@ column name.
 
 ---
 
+## Where this stands (1 Sept 2026)
+
+Written as a handover. If you are picking this up on a different machine, or
+after a gap, start here and then read **Moving this off a laptop** below.
+
+### What is solid
+
+**The data spine.** Both leagues 2016–2026: 973k plays, 126k drives, 12.5k
+games, all reconciling to final scores (NFL exactly; college 99.3%, the rest a
+feed limit documented in `CAPABILITIES.md`). 358k odds snapshots across 39
+market keys and 17 books, every one carrying `fair_prob`. This is the part that
+cannot be rebuilt by running a script — line movement is only observable as it
+happens — and it is why the backups below matter more than the code.
+
+**De-vig.** Power method, per rung, with the sign-aware pairing that spreads
+need. One-sided player ladders borrow their margin from the two-way parent;
+touchdown boards scale to an expected-scorer target regressed on the closing
+total. 15 tests in `make test` guard the invariants, and four of them failed on
+their first run against real defects.
+
+**The tag layer.** 13 script tags and 27 diagnostics, counted from play-by-play
+only — no PFF, no box scores. Thresholds are league-relative because a flat cut
+means different things in the two leagues. The vocabulary is expected to grow;
+`pairs.py`, `forecast.py` and the Critique response all read it dynamically, so
+a new tag needs a seed row and a predicate and nothing else.
+
+**Staying current.** The `results` service runs the whole chain every 30
+minutes and repairs what CFBD gets wrong along the way. Without it a finished
+Saturday still reads as unplayed.
+
+### The SGP estimator, and what it is honestly worth
+
+`pricing/sgp.py` estimates what a book will quote, in three separable parts:
+independence, the counted correlation, and the book's margin. Separable so a
+miss can be attributed rather than guessed at.
+
+Calibrated against **57 quotes hand-collected from DraftKings and FanDuel**
+(`scripts/sgp_sheet.py` generates the slips, `scripts/sgp_record.py` reads the
+answers back). Six of eight slip shapes land within ±6%:
+
+| Design | Median miss |
+|---|---|
+| pair/correlated, pair/conflicting | −1 to −2% |
+| triple/reinforcing | −2% |
+| genuine/three-risk | +5% |
+| pair/team-total | −6% |
+| **triple/mixed** | **+13 to +33%** |
+| **quad/reinforcing** | **+5 to +52%** |
+
+Those last two are flagged `"reliable": false` in the response with the range
+attached. Four hypotheses were tested and none explains them; the miss is
+ordered in the spread, which is a real finding and not yet a model. Do not
+apply a correction to them without more quotes — 12 per design is enough to see
+a pattern and not enough to fit one.
+
+**Entailment is the piece worth understanding.** Some legs cannot fail given
+the others: Seattle -3.5 with over 44.5 means Seattle scores at least 25, so
+"Seattle over 24.5" is free, and the books price it that way. That is
+arithmetic, not correlation, and no amount of counting finds it — the empirical
+surface called a certainty a 1.52 lift. `pricing/implications.py` checks it by
+testing every leg against the grid of realistic scores rather than deriving it
+in algebra, which caught a sign error in the first version.
+
+### What is deliberately not shipping
+
+Critique and Test-a-hypothesis work and are held back. Each is a
+natural-language interface with a regex behind it, and a user who phrases a leg
+the way people talk gets "not read" for input the engine could have answered.
+They ship with the reasoning layer that makes them real. See `ROADMAP.md`.
+
+### The open questions, in the order worth taking them
+
+1. **Why `triple/mixed` misses.** Most valuable, least understood. Needs
+   quotes across more games before it is worth modelling.
+2. **Correlation conditioned on the line.** Measured and real: NCAAF spread ×
+   over runs from φ 0.041 at a pick'em to 0.302 above 24 points, and the pair
+   surface uses one number for both. Condition on the line rather than on unit
+   ranks — the line is the market's own summary of the matchup.
+3. **A touchdown-scorer template.** Anytime TD prices but cannot be correlated
+   with anything, so those slips are quoted as independent. The `prop/atd-total`
+   design measures the size of that gap directly.
+
+## Moving this off a laptop
+
+Three things exist only where you are running it, and they are not equally
+replaceable.
+
+**The code.** Push it. `git push origin main`. Everything else here assumes
+this is done.
+
+**The database.** 2.9 GB live, 126 MB as a compressed dump. Most of it
+re-ingests from nflverse and CFBD on demand — but `odds_snapshots` does not,
+because a line that has moved cannot be re-fetched, and `user_bets` does not,
+because those 141 rows were collected by hand from two sportsbooks.
+
+```bash
+mkdir -p backups
+docker exec youredge-db pg_dump -U youredge -d youredge --no-owner --no-acl -Fc \
+  -f /tmp/youredge_full.dump
+docker cp youredge-db:/tmp/youredge_full.dump backups/youredge_full_$(date +%Y%m%d).dump
+```
+
+Restoring onto a fresh machine:
+
+```bash
+docker compose up -d db
+docker cp backups/youredge_full_YYYYMMDD.dump youredge-db:/tmp/restore.dump
+docker exec youredge-db pg_restore -U youredge -d youredge --no-owner --clean --if-exists /tmp/restore.dump
+bash db/migrate.sh          # applies anything newer than the dump
+```
+
+`backups/` is git-ignored. Put the dump somewhere that is not this machine —
+cloud storage, an external drive, whatever you already trust. A 126 MB file is
+small enough that there is no excuse for one copy of it.
+
+**The secrets.** `.env` is not in git and must not be. Copy it across by hand.
+It holds `ODDS_API_KEY` and `CFBD_API_KEY`; the Odds API key has a monthly
+credit budget, so a second machine polling at the same time spends the same
+quota twice. Run the poller in one place.
+
+### Picking it back up
+
+```bash
+docker compose up -d db redis engine
+docker compose --profile poller up -d poller results   # only on the machine that should poll
+make test                                              # 15 invariants, should be green
+```
+
+Then `make catchup` to pull in whatever happened while you were away.
+
 ## What is not built
 
 No model has been trained. There is no simulator, no correlation engine, and no SGP

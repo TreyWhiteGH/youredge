@@ -64,3 +64,7 @@ env/
 # Cache directories
 cache/
 .pytest_cache/
+
+# Database dumps and hand-collected quote sheets. Small enough to be tempting
+# and large enough to ruin a clone; keep them somewhere that is not git.
+backups/

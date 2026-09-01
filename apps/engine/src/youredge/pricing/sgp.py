@@ -67,6 +67,41 @@ _PAIR = text("""
 # estimate on noise. Below this the pair is treated as independent and said to be.
 MIN_PAIR_N = 200
 
+# Slip shapes the estimator is measurably wrong about, and says so.
+#
+# Twenty-four quotes across two books put these two structures 13-33% long, in a
+# gradient that runs with the spread and that four separate hypotheses failed to
+# explain: the team-total line is already market-derived, the pair's lift is flat
+# across absolute spread, and conditioning on signed spread predicts the error in
+# the wrong direction. What both share is that the leg entailment removes is a
+# spread or a total rather than a team total -- suggestive, untested, and not
+# something to price on.
+#
+# So the estimate is returned with a warning rather than silently or not at all.
+# A tool that knows which shapes it gets wrong is worth more than one that is
+# confidently wrong on a quarter of them, and this is the same choice Critique
+# makes when it refuses to combine legs.
+UNRELIABLE_NOTE = (
+    "This slip has a shape the estimator is measurably wrong about. Across 24 "
+    "observed quotes, structures where a spread or game total is the entailed "
+    "leg came back 13-33% longer than the books priced them, and the cause is "
+    "not yet understood. Treat the estimate as a lower bound on how short the "
+    "book will go."
+)
+
+
+def unreliable(legs, entailed_descriptions) -> bool:
+    """True when what entailment removed was a spread or a game total.
+
+    Slips whose free leg is a team total price accurately -- that case was
+    checked against the books and lands within a couple of points. It is the
+    other two that miss.
+    """
+    if not entailed_descriptions:
+        return False
+    kept = {l.get("template") for l in legs}
+    return not {"SPREAD", "TOTAL", "MONEYLINE"} <= kept
+
 
 def frechet_bounds(probs: Sequence[float]) -> tuple[float, float]:
     """The range a joint probability can occupy given only its marginals."""
@@ -222,10 +257,13 @@ async def estimate(conn, league: str, book: str,
     m = await book_margin(conn, league, book, max(n_priced, 2))
     quoted_prob = min(j["joint"] * (1 + m["margin"]), 0.999)
 
+    shaky = unreliable(legs, j["entailed_legs"])
     return {
         "legs": len(legs),
         "legs_carrying_risk": n_priced,
         "entailed_legs": j["entailed_legs"],
+        "reliable": not shaky,
+        **({"warning": UNRELIABLE_NOTE} if shaky else {}),
         "independence_price": prob_to_american(j["independence"]),
         "fair_price": prob_to_american(j["joint"]),
         "estimated_book_price": prob_to_american(quoted_prob),

@@ -104,23 +104,32 @@ _GAMES = text("""
     SELECT g.game_id, g.league, g.kickoff,
            ht.name AS home, ht.abbr AS home_abbr, g.home_team_id,
            at.name AS away, at.abbr AS away_abbr, g.away_team_id,
+           -- Every line here is one the books being tested actually post.
+           -- Fair value is anchored on Pinnacle on purpose, because it is the
+           -- sharpest price; the number to go and *ask DraftKings for* is a
+           -- different question, and taking the anchor's line for both put
+           -- "over 47.0" on a sheet when Pinnacle alone quotes 47, DraftKings
+           -- has 46.5 and FanDuel 47.5.
            (SELECT s.line FROM markets m JOIN odds_snapshots s USING (market_id)
              WHERE m.game_id = g.game_id AND m.market_key = 'spreads'
+               AND m.bookmaker = ANY(:books)
                AND (s.outcome ILIKE ht.name || '%')
              ORDER BY s.captured_at DESC LIMIT 1) AS spread,
            (SELECT s.line FROM markets m JOIN odds_snapshots s USING (market_id)
              WHERE m.game_id = g.game_id AND m.market_key = 'totals'
-               AND s.outcome ILIKE 'over'
+               AND m.bookmaker = ANY(:books) AND s.outcome ILIKE 'over'
              ORDER BY s.captured_at DESC LIMIT 1) AS total,
            -- The team totals a book has actually posted. Half the game total is
            -- a reasonable guess and a useless one: a leg has to name a line the
            -- book quotes or there is nothing to price it against.
            (SELECT s.line FROM markets m JOIN odds_snapshots s USING (market_id)
              WHERE m.game_id = g.game_id AND m.market_key = 'team_totals'
+               AND m.bookmaker = ANY(:books)
                AND m.side_team_id = g.home_team_id AND s.outcome ILIKE 'over'
              ORDER BY s.captured_at DESC LIMIT 1) AS home_tt,
            (SELECT s.line FROM markets m JOIN odds_snapshots s USING (market_id)
              WHERE m.game_id = g.game_id AND m.market_key = 'team_totals'
+               AND m.bookmaker = ANY(:books)
                AND m.side_team_id = g.away_team_id AND s.outcome ILIKE 'over'
              ORDER BY s.captured_at DESC LIMIT 1) AS away_tt
     FROM games g
@@ -174,6 +183,7 @@ async def build(league: str, limit: int, as_csv: bool, repeat: bool) -> None:
     async with engine.connect() as conn:
         pool = (await conn.execute(_GAMES, {
             "league": league, "pool": max(limit * 8, 40), "repeat": repeat,
+            "books": list(BOOKS),
         })).mappings().all()
         priced_pool = [g for g in pool
                        if g["spread"] is not None and g["total"] is not None]

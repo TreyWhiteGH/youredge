@@ -75,6 +75,17 @@ async def parse_leg(conn, game_id: str, raw: str) -> dict[str, Any] | None:
     num = re.search(r"([+-]?\d+(?:\.\d+)?)", t)
     value = float(num.group(1)) if num else None
 
+    # Props are tried first, and the ordering is not cosmetic. The game-total
+    # rule below fires on any leg containing "over", so it swallowed
+    # "Sam Darnold over 231.5 pass yds" and returned a game total at 231.5.
+    # Nothing quotes that, so it failed loudly — until the alternate-line
+    # fallback was added, at which point "Zach Charbonnet over 45.5 rush yds"
+    # found a real game total at 45.5 and priced a rushing prop as a totals bet.
+    # A wrong answer that looks right is worse than no answer.
+    prop = await _parse_prop(conn, teams, raw, t, value)
+    if prop:
+        return prop
+
     # over/under on the game total
     if re.search(r"\b(over|under)\b", t) and "team total" not in t:
         ou = "over" if "over" in t else "under"

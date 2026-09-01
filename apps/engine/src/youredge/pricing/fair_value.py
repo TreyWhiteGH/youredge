@@ -30,8 +30,20 @@ log = logging.getLogger(__name__)
 # left unpriced simply because Pinnacle skipped the game.
 ANCHOR_BOOKS = ("pinnacle", "betmgm", "fanduel", "draftkings", "caesars")
 
-# Where to look when the main market does not quote the requested line.
-_ALTERNATE_OF = {"totals": "alternate_totals", "spreads": "alternate_spreads"}
+# Where to look when the main market does not quote the requested line. Props
+# have ladders too, and far deeper ones: a book posts one reception-yards number
+# per receiver and sixty-eight rungs beside it, all polled and all de-vigged.
+# Leaving them out meant "over 59.5" on an 83.5 line came back unpriced against
+# a market plainly offering it.
+_ALTERNATE_OF = {
+    "totals": "alternate_totals",
+    "spreads": "alternate_spreads",
+    "player_pass_yds": "player_pass_yds_alternate",
+    "player_rush_yds": "player_rush_yds_alternate",
+    "player_reception_yds": "player_reception_yds_alternate",
+    "player_receptions": "player_receptions_alternate",
+    "player_pass_tds": "player_pass_tds_alternate",
+}
 
 # Past this the number describes a market that has moved on — and how long that
 # takes depends entirely on how close kickoff is. A line six hours old on a
@@ -93,7 +105,7 @@ def american_to_implied(price: int) -> float:
 _LATEST = text("""
     SELECT DISTINCT ON (m.bookmaker, s.outcome, s.line)
            m.bookmaker, s.outcome, s.line, s.price_american, s.implied_prob,
-           s.captured_at
+           s.fair_prob, s.captured_at
     FROM markets m
     JOIN odds_snapshots s ON s.market_id = m.market_id
     WHERE m.game_id = :gid AND m.market_key = :mkey
@@ -187,6 +199,19 @@ async def price_leg(
             if a and b and matches(a, outcome) and a["implied_prob"] and b["implied_prob"]:
                 fair = _devig_pair(a["implied_prob"], b["implied_prob"])
                 anchor = book
+                break
+
+    # One-sided boards -- anytime touchdown, and the over-only prop ladders --
+    # have no complement to de-vig against, so the pairing above finds nothing.
+    # Their fair value is not unknown though: it was computed at ingest, by
+    # scaling the board to an expected-scorer target or by borrowing the two-way
+    # parent's margin, and stored on the row. Reading it back is the difference
+    # between "we cannot price the most-bet leg in the sport" and pricing it.
+    if fair is None:
+        for book in ANCHOR_BOOKS:
+            row = at(by_book.get(book, {}), outcome.lower())
+            if row and matches(row, outcome) and row["fair_prob"] is not None:
+                fair, anchor = float(row["fair_prob"]), book
                 break
 
     mine = at(by_book.get(user_book, {}), outcome.lower())

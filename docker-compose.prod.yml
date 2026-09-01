@@ -1,0 +1,63 @@
+# Production stack. Differs from docker-compose.yml in three ways that matter:
+# the database lives elsewhere, Caddy fronts everything, and there is no `ingest`
+# service because one-off jobs are run with `docker compose run`.
+#
+# DATABASE_URL points at managed Postgres. Nothing here starts a database, which
+# is deliberate: the one part of this system that cannot be rebuilt from an API
+# should not be sitting on a box you might rebuild.
+services:
+  engine:
+    image: youredge-engine
+    build: ./apps/engine
+    restart: unless-stopped
+    env_file: .env.prod
+    expose: ["8000"]
+    command: ["uvicorn", "youredge.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+  # Exactly one of each. The Odds API budget is monthly and shared, so a second
+  # poller anywhere -- including a laptop -- spends the same quota twice.
+  poller:
+    image: youredge-engine
+    restart: unless-stopped
+    env_file: .env.prod
+    command: ["python", "-m", "youredge.ingest.odds_poller"]
+
+  results:
+    image: youredge-engine
+    restart: unless-stopped
+    env_file: .env.prod
+    command: ["python", "-m", "youredge.ingest.catchup", "--loop"]
+
+  # Runs once, copies the built frontend into a volume, exits. Caddy serves
+  # that volume. A one-shot rather than a server because the frontend is static
+  # once built, and running a second web server just to hand files to the first
+  # one would be a process that exists to be proxied.
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+    image: youredge-web
+    command: ["sh", "-c", "rm -rf /srv/* && cp -r /dist/. /srv/"]
+    volumes:
+      - webdist:/srv
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    env_file: .env.prod
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - webdist:/srv:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      engine:
+        condition: service_started
+      web:
+        condition: service_completed_successfully
+
+volumes:
+  webdist:
+  caddy_data:
+  caddy_config:

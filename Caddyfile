@@ -1,0 +1,27 @@
+# Production entry point. Terminates TLS, gates everything behind a password,
+# serves the built frontend, and forwards /api to the engine.
+#
+# The password matters more than it looks. The API has no authentication of its
+# own, and five of its routes return numbers derived from licensed PFF data --
+# so an open URL is a licensing exposure, not only a security one.
+{$SITE_ADDRESS} {
+	encode gzip
+
+	# Everything, including the API, sits behind one login. Generate the hash
+	# with:  docker run --rm caddy caddy hash-password --plaintext 'yourpassword'
+	basic_auth {
+		{$BASIC_AUTH_USER} {$BASIC_AUTH_HASH}
+	}
+
+	handle /api/* {
+		reverse_proxy engine:8000
+	}
+
+	# A single-page app: unknown paths are routes, not missing files, so they
+	# fall back to the shell rather than returning 404.
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

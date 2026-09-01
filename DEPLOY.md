@@ -20,8 +20,14 @@ not to spend long optimising this part.
 
 ## 1. Database first
 
-Create a Postgres 16 instance at **Neon**, region **`aws-us-east-1`** (N.
-Virginia). Neon offers `us-east-1` and `us-east-2`; Virginia is about 200 miles
+Create a **Postgres 18** instance at **Neon**, region **`aws-us-east-1`** (N.
+Virginia).
+
+Take the newest major Neon offers rather than matching the version the dump came
+from. A dump restores forward without complaint, nothing here needs anything
+newer than Postgres 12 -- the schema uses only plpgsql and pgcrypto, no custom
+functions or materialised views -- and the version worth avoiding is whichever
+one differs from your laptop. `docker-compose.yml` runs 18 for the same reason. Neon offers `us-east-1` and `us-east-2`; Virginia is about 200 miles
 from Newark and Ohio about 450, so the first is single-digit milliseconds away
 and the second mid-teens. You need about 10 GB: the dump is 126 MB but restores to ~3 GB
 and grows with every poll.
@@ -38,6 +44,9 @@ Restore your backup into it:
 pg_restore --no-owner --no-acl -d "$MANAGED_URL" backups/youredge_full_YYYYMMDD.dump
 bash db/migrate.sh                     # anything newer than the dump
 ```
+
+The dump was taken from Postgres 16 and restores into 18 without special
+handling; that direction is the supported one.
 
 `pg_restore` will print errors about extensions and roles it cannot create.
 Those are expected on a managed instance and harmless — check the table counts

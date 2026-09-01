@@ -396,6 +396,26 @@ quota twice. Run the poller in one place.
 
 ### Picking it back up
 
+**The local database image is Postgres 18, and an existing Postgres 16 data
+directory will not start under it** — the container exits with "database files
+are incompatible with server" and no amount of restarting helps. Postgres does
+not upgrade a data directory in place across major versions.
+
+If you still have a 16 volume on the old machine, either leave that machine on
+16 or recreate the volume from the dump you already have:
+
+```bash
+docker compose down
+docker volume rm youredge_pgdata
+docker compose up -d db
+docker cp backups/youredge_full_YYYYMMDD.dump youredge-db:/tmp/restore.dump
+docker exec youredge-db pg_restore -U youredge -d youredge --no-owner /tmp/restore.dump
+bash db/migrate.sh
+```
+
+On a new machine there is nothing to migrate — the volume is created at 18 and
+the dump restores into it.
+
 ```bash
 docker compose up -d db redis engine
 docker compose --profile poller up -d poller results   # only on the machine that should poll

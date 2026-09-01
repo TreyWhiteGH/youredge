@@ -581,3 +581,7 @@ table.data.linescore tbody tr:hover { background: none; }
      near-white one on the light theme, without any per-team luminance handling. */
   color: color-mix(in srgb, var(--tm-color) 55%, var(--text-primary));
 }
+
+/* Wordmark: "the" recedes so the name reads as one word at a glance and still shows
+   its parts up close. */
+.brand-text .brand-the { font-weight: 400; opacity: 0.6; }

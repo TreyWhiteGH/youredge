@@ -1,10 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="24" height="24">
-  <!-- YourEdge mark: an ascending edge breaking through, with the inflection point
-       marked. Same geometry as <Icon.Logo>, sized for a 16px favicon. -->
+  <!-- TheBetLab mark: a flask whose contents are a rising line. The lab is where the
+       question gets tested; the line is what you are testing for. The dot marks the
+       inflection, carried over from the previous mark so the shape still reads as ours. -->
   <rect width="24" height="24" rx="5.5" fill="#07090f"/>
-  <path d="M3.8 19.4 10.3 9.6l4.1 4.9 5.8-9.3" fill="none" stroke="#4c8dff"
-        stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M15.6 5.1h4.4v4.4" fill="none" stroke="#4c8dff"
-        stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="10.3" cy="9.6" r="1.9" fill="#2fcf8f"/>
+  <path d="M9.6 3.6v5.6l-4.9 9.0a1.6 1.6 0 0 0 1.4 2.4h11.8a1.6 1.6 0 0 0 1.4-2.4l-4.9-9.0V3.6"
+        fill="none" stroke="#4c8dff" stroke-width="1.7" stroke-linejoin="round"/>
+  <path d="M8.2 3.6h7.6" fill="none" stroke="#4c8dff" stroke-width="1.7" stroke-linecap="round"/>
+  <path d="M7.3 16.6l3.1-2.9 2.2 1.8 3.6-4.2" fill="none" stroke="#2fcf8f"
+        stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="10.4" cy="13.7" r="1.25" fill="#2fcf8f"/>
 </svg>

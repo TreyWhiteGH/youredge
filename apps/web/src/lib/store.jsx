@@ -12,12 +12,36 @@ const Ctx = createContext(null);
 const MAX_RECENTS = 12;
 const MAX_COMPARE = 4;
 
+/**
+ * Carry saved preferences across the rename from YourEdge to TheBetLab.
+ *
+ * Renaming the prefix on its own would not error — it would just read nothing and
+ * silently hand every existing user an empty watchlist, a cleared compare tray and the
+ * default theme, which looks like data loss because it is. This copies each key once
+ * and leaves the originals alone, so an older build still works and a half-migrated
+ * browser cannot end up with neither.
+ */
+const KEYS = ['league', 'theme', 'watchlist', 'recents', 'compare'];
+function migrateStorage() {
+  try {
+    if (localStorage.getItem('tbl.migrated')) return;
+    for (const key of KEYS) {
+      const old = localStorage.getItem(`ye.${key}`);
+      if (old !== null && localStorage.getItem(`tbl.${key}`) === null) {
+        localStorage.setItem(`tbl.${key}`, old);
+      }
+    }
+    localStorage.setItem('tbl.migrated', '1');
+  } catch { /* private mode, quota, storage disabled — defaults are fine */ }
+}
+migrateStorage();
+
 export function AppProvider({ children }) {
-  const [league, setLeague] = usePersisted('ye.league', 'nfl');
-  const [theme, setTheme] = usePersisted('ye.theme', 'dark');
-  const [watchlist, setWatchlist] = usePersisted('ye.watchlist', []);
-  const [recents, setRecents] = usePersisted('ye.recents', []);
-  const [compare, setCompare] = usePersisted('ye.compare', []);
+  const [league, setLeague] = usePersisted('tbl.league', 'nfl');
+  const [theme, setTheme] = usePersisted('tbl.theme', 'dark');
+  const [watchlist, setWatchlist] = usePersisted('tbl.watchlist', []);
+  const [recents, setRecents] = usePersisted('tbl.recents', []);
+  const [compare, setCompare] = usePersisted('tbl.compare', []);
 
   React.useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);

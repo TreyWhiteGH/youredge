@@ -448,7 +448,7 @@ export default function BetLab() {
       </Section>
 
       <Notice>
-        YourEdge produces probability-based analysis, not guarantees. <strong>No bet is a valid
+        TheBetLab produces probability-based analysis, not guarantees. <strong>No bet is a valid
         outcome</strong> — and it is the one the engine returns most often when a price is short.
         Avoid chasing losses or sizing up because a payout looks large.
       </Notice>

@@ -1,4 +1,4 @@
-# YourEdge — web
+# TheBetLab — web
 
 React + Vite front end for the football engine. It talks to one API and renders what
 that API returns; there is no second source of truth and no mock data anywhere in the
@@ -107,6 +107,17 @@ public/icons/ brand mark, favicon, wordmark — real .svg files
 
 No icon font, no CDN, no emoji: every glyph is a path in `src/icons/index.jsx` or a file
 in `public/icons/`.
+
+## Naming
+
+The product is **TheBetLab** (thebetlab.app) and the UI says so everywhere. The
+repository, the Python package, the Docker containers and the database are still
+`youredge` — renaming those touches volumes, container names and an installed package,
+which is infrastructure work rather than a rebrand, and none of it is user-visible.
+
+Persisted preferences moved from the `ye.` prefix to `tbl.`, with a one-time copy in
+`store.jsx`. Renaming the prefix alone would not error; it would just read nothing and
+hand every existing user an empty watchlist and the default theme.
 
 ## Keyboard
 

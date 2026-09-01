@@ -64,7 +64,7 @@ export default function AppShell() {
       <header className="topbar">
         <NavLink to="/slate" className="brand">
           <span className="brand-mark"><Icon.Logo size={24} /></span>
-          <span className="brand-text">YourEdge</span>
+          <span className="brand-text"><span className="brand-the">the</span>betlab</span>
         </NavLink>
 
         <div className="league-switch" role="group" aria-label="League">

@@ -1,14 +1,16 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 168 28" width="168" height="28"
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 186 28" width="186" height="28"
      font-family="Inter, -apple-system, sans-serif">
-  <!-- Mark + wordmark lockup, for README headers and any surface that needs the
-       full name rather than the glyph alone. -->
+  <!-- Mark + wordmark lockup. "the" sits lighter than "betlab" so the name reads as one
+       word at a glance and still shows its parts up close. -->
   <g transform="translate(2 2)">
-    <path d="M3.8 19.4 10.3 9.6l4.1 4.9 5.8-9.3" fill="none" stroke="#4c8dff"
-          stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M15.6 5.1h4.4v4.4" fill="none" stroke="#4c8dff"
-          stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"/>
-    <circle cx="10.3" cy="9.6" r="1.9" fill="#2fcf8f"/>
+    <path d="M9.6 3.6v5.6l-4.9 9.0a1.6 1.6 0 0 0 1.4 2.4h11.8a1.6 1.6 0 0 0 1.4-2.4l-4.9-9.0V3.6"
+          fill="none" stroke="#4c8dff" stroke-width="1.7" stroke-linejoin="round"/>
+    <path d="M8.2 3.6h7.6" fill="none" stroke="#4c8dff" stroke-width="1.7" stroke-linecap="round"/>
+    <path d="M7.3 16.6l3.1-2.9 2.2 1.8 3.6-4.2" fill="none" stroke="#2fcf8f"
+          stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="10.4" cy="13.7" r="1.25" fill="#2fcf8f"/>
   </g>
-  <text x="32" y="19.5" font-size="17" font-weight="700" letter-spacing="-0.5"
-        fill="currentColor">YourEdge</text>
+  <text x="32" y="19.5" font-size="17" letter-spacing="-0.5" fill="currentColor">
+    <tspan font-weight="400" opacity="0.62">the</tspan><tspan font-weight="750">betlab</tspan>
+  </text>
 </svg>

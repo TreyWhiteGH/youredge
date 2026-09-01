@@ -1,4 +1,4 @@
-/* ── YourEdge icon set ────────────────────────────────────────────────────────
+/* ── TheBetLab icon set ───────────────────────────────────────────────────────
    Hand-drawn on a 24×24 grid, stroked in `currentColor` at 1.6 so weight matches
    Inter's at body sizes. No icon font, no CDN, no emoji — every glyph in the app
    is a path in this file, which means it themes, scales, and diffs like code.
@@ -29,15 +29,18 @@ function Svg({ size = 18, children, fill = 'none', ...rest }) {
 }
 
 /* ── Brand ── */
-// The mark is an ascending edge cutting through a baseline: the whole product in
-// one shape. Solid, not stroked, so it holds up at favicon size.
+// A flask whose contents are a rising line: the lab is where the question gets tested,
+// the line is what you are testing for. The flask takes `currentColor` so it follows
+// the theme's accent, while the line inside stays on the "good" hue — the one place in
+// the app where those two colours are deliberately shown together.
 export const Logo = ({ size = 26 }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill="none" aria-hidden="true">
-    <path d="M3 20.2 10.1 9.5l4.2 5 6.5-10.4" stroke="currentColor" strokeWidth="2.2"
+    <path d="M9.6 3.6v5.6l-4.9 9.0a1.6 1.6 0 0 0 1.4 2.4h11.8a1.6 1.6 0 0 0 1.4-2.4l-4.9-9.0V3.6"
+      stroke="currentColor" strokeWidth="1.7" strokeLinejoin="round" />
+    <path d="M8.2 3.6h7.6" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+    <path d="M7.3 16.6l3.1-2.9 2.2 1.8 3.6-4.2" stroke="var(--good)" strokeWidth="1.7"
       strokeLinecap="round" strokeLinejoin="round" />
-    <path d="M16.1 4.1h4.7v4.7" stroke="currentColor" strokeWidth="2.2"
-      strokeLinecap="round" strokeLinejoin="round" />
-    <circle cx="10.1" cy="9.5" r="1.9" fill="currentColor" />
+    <circle cx="10.4" cy="13.7" r="1.25" fill="var(--good)" />
   </svg>
 );
 

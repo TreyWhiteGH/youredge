@@ -211,12 +211,18 @@ async def build(league: str, limit: int, as_csv: bool, repeat: bool,
             for label, purpose, build_legs in DESIGNS:
                 if not wanted(label, only):
                     continue
-                if "team total" in label and (g["home_tt"] is None
-                                              or g["away_tt"] is None):
-                    continue
                 raw = build_legs(g["home_abbr"], g["away_abbr"],
                                  g["spread"], g["total"],
                                  g["home_tt"], g["away_tt"])
+                # Guarding on the label was wrong: triple/mixed and
+                # quad/reinforcing both use a team total without saying so in
+                # their name, so a game where the books post none produced
+                # "LV team total over None" -- which parse_leg reads as a leg
+                # with no line, and a leg with no line matches any rung on the
+                # board. An arbitrary price, quietly. Check the legs, not the
+                # label.
+                if any("None" in r for r in raw):
+                    continue
                 priced, missing = [], []
                 for r in raw:
                     leg = await parse_leg(conn, g["game_id"], r)

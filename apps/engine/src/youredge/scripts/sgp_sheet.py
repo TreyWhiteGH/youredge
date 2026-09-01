@@ -177,7 +177,17 @@ def diversify(games: list, want: int) -> list:
     return out
 
 
-async def build(league: str, limit: int, as_csv: bool, repeat: bool) -> None:
+def wanted(label: str, only: list[str] | None) -> bool:
+    """Whether a design belongs on this sheet.
+
+    Substring rather than exact match, so --only quad catches quad/reinforcing
+    and --only prop catches all four prop designs without listing them.
+    """
+    return not only or any(o in label for o in only)
+
+
+async def build(league: str, limit: int, as_csv: bool, repeat: bool,
+                only: list[str] | None = None) -> None:
     engine = get_engine()
     rows = []
     async with engine.connect() as conn:
@@ -199,6 +209,8 @@ async def build(league: str, limit: int, as_csv: bool, repeat: bool) -> None:
                 continue
             seen: set[tuple[str, ...]] = set()
             for label, purpose, build_legs in DESIGNS:
+                if not wanted(label, only):
+                    continue
                 if "team total" in label and (g["home_tt"] is None
                                               or g["away_tt"] is None):
                     continue
@@ -264,6 +276,8 @@ async def build(league: str, limit: int, as_csv: bool, repeat: bool) -> None:
             if g["home_tt"] is None:
                 continue
             have = {r["design"] for r in rows if r["game"].endswith(g["home_abbr"])}
+            if not wanted("genuine/three-risk", only):
+                break
             for step in _ALT_TOTAL_STEPS:
                 if any(d.startswith("genuine") for d in have):
                     break
@@ -340,6 +354,8 @@ async def build(league: str, limit: int, as_csv: bool, repeat: bool) -> None:
                         f"{wr['name']} anytime td", f"over {g['total']}"]))
 
                 for label, raws in designs:
+                    if not wanted(label, only):
+                        continue
                     priced, missing = [], []
                     for r in raws:
                         leg = await parse_leg(conn, g["game_id"], r)
@@ -403,5 +419,9 @@ if __name__ == "__main__":
     ap.add_argument("--csv", action="store_true")
     ap.add_argument("--repeat", action="store_true",
                     help="include games already recorded in user_bets")
+    ap.add_argument("--only", help="comma-separated design substrings, e.g. "
+                                   "'triple/mixed,quad' — everything else is "
+                                   "left off the sheet")
     args = ap.parse_args()
-    asyncio.run(build(args.league, args.games, args.csv, args.repeat))
+    only = [x.strip() for x in args.only.split(",")] if args.only else None
+    asyncio.run(build(args.league, args.games, args.csv, args.repeat, only))

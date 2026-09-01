@@ -86,6 +86,20 @@ async def estimate_joint(conn, league: str,
     for i in range(n):
         for j in range(i + 1, n):
             a, b = legs[i], legs[j]
+            # A leg with no template has no counted surface -- an anytime
+            # touchdown, or a prop on someone who is not his team's primary at
+            # the position. It is priced perfectly well and simply cannot be
+            # correlated, so it is reported as independent rather than sorted
+            # against a string it is not.
+            if a.get("template") is None or b.get("template") is None:
+                pairs.append({
+                    "legs": [a.get("raw"), b.get("raw")], "lift": None, "n": 0,
+                    "used": False,
+                    "note": ("no counted surface for one of these legs, so they "
+                             "are treated as independent — which understates a "
+                             "real relationship rather than inventing one"),
+                })
+                continue
             key = sorted([(a["template"], a["side"]), (b["template"], b["side"])])
             row = (await conn.execute(_PAIR, {
                 "lg": league, "ta": key[0][0], "sa": key[0][1],

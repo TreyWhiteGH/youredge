@@ -20,8 +20,10 @@ not to spend long optimising this part.
 
 ## 1. Database first
 
-Create a Postgres 16 instance at **Neon**, region **AWS us-east**, to sit near
-the Newark box. You need about 10 GB: the dump is 126 MB but restores to ~3 GB
+Create a Postgres 16 instance at **Neon**, region **`aws-us-east-1`** (N.
+Virginia). Neon offers `us-east-1` and `us-east-2`; Virginia is about 200 miles
+from Newark and Ohio about 450, so the first is single-digit milliseconds away
+and the second mid-teens. You need about 10 GB: the dump is 126 MB but restores to ~3 GB
 and grows with every poll.
 
 Neon rather than IONOS's own managed Postgres, deliberately. IONOS keeps
@@ -95,10 +97,10 @@ apt update && apt install -y docker.io docker-compose-plugin git
 git clone https://github.com/TreyWhiteGH/youredge.git && cd youredge
 ```
 
-Newark and Neon's `aws-us-east` are both US East, which keeps the engine a few
-milliseconds from its database. This engine issues many small queries rather
-than a few large ones, so latency between the two compounds in a way total
-bandwidth never will.
+Newark and `aws-us-east-1` are close enough that the database feels local. That
+matters more here than it looks: this engine issues many small queries rather
+than a few large ones -- a single Critique makes one pair-surface lookup per leg
+combination -- so round-trip latency compounds in a way bandwidth never will.
 
 ## 4. Configure
 

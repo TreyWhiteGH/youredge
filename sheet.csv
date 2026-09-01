@@ -1,0 +1,23 @@
+game,kickoff,design,legs,n,independence,fair,corr,est_draftkings,est_fanduel,margin_basis,actual_draftkings,actual_fanduel,game_id,league
+NE @ SEA,Thu 10 Sep 00:20,pair/correlated,SEA -3.5 | over 44.5,2,318,308,1.0267,236,233,fitted,,,nfl:2026_01_NE_SEA,nfl
+NE @ SEA,Thu 10 Sep 00:20,pair/conflicting,SEA -3.5 | under 44.5,2,307,317,0.9768,244,241,fitted,,,nfl:2026_01_NE_SEA,nfl
+NE @ SEA,Thu 10 Sep 00:20,pair/team-total,SEA -3.5 | SEA team total over 24.5,2,363,204,1.5234,151,149,fitted,,,nfl:2026_01_NE_SEA,nfl
+NE @ SEA,Thu 10 Sep 00:20,pair/moneyline,SEA moneyline | over 44.5,2,224,224,1.0,168,165,fitted,,,nfl:2026_01_NE_SEA,nfl
+NE @ SEA,Thu 10 Sep 00:20,triple/reinforcing,SEA -3.5 | over 44.5 | SEA team total over 24.5,3,318,308,1.0267,236,233,fitted,,,nfl:2026_01_NE_SEA,nfl
+NE @ SEA,Thu 10 Sep 00:20,triple/mixed,SEA -3.5 | under 44.5 | SEA team total over 24.5,3,343,930,0.4303,750,741,fitted,,,nfl:2026_01_NE_SEA,nfl
+NE @ SEA,Thu 10 Sep 00:20,quad/reinforcing,SEA -3.5 | over 44.5 | SEA team total over 24.5 | NE team total over 20.5,4,329,747,0.5066,599,592,fitted,,,nfl:2026_01_NE_SEA,nfl
+SF @ LA,Fri 11 Sep 00:35,pair/correlated,LA -3.5 | over 48.5,2,307,297,1.0267,227,224,fitted,,,nfl:2026_01_SF_LA,nfl
+SF @ LA,Fri 11 Sep 00:35,pair/conflicting,LA -3.5 | under 48.5,2,296,306,0.9768,235,232,fitted,,,nfl:2026_01_SF_LA,nfl
+SF @ LA,Fri 11 Sep 00:35,pair/team-total,LA -3.5 | LA team total over 26.5,2,293,158,1.5234,113,111,fitted,,,nfl:2026_01_SF_LA,nfl
+SF @ LA,Fri 11 Sep 00:35,pair/moneyline,LA moneyline | over 48.5,2,216,216,1.0,161,158,fitted,,,nfl:2026_01_SF_LA,nfl
+SF @ LA,Fri 11 Sep 00:35,triple/reinforcing,LA -3.5 | over 48.5 | LA team total over 26.5,3,307,297,1.0267,227,224,fitted,,,nfl:2026_01_SF_LA,nfl
+SF @ LA,Fri 11 Sep 00:35,triple/mixed,LA -3.5 | under 48.5 | LA team total over 26.5,3,286,797,0.4303,640,633,fitted,,,nfl:2026_01_SF_LA,nfl
+SF @ LA,Fri 11 Sep 00:35,quad/reinforcing,LA -3.5 | over 48.5 | LA team total over 26.5 | SF team total over 22.5,4,302,693,0.5066,554,548,fitted,,,nfl:2026_01_SF_LA,nfl
+CHI @ CAR,Sun 13 Sep 17:00,pair/correlated,CAR +2.5 | over 47.5,2,329,318,1.0267,245,242,fitted,,,nfl:2026_01_CHI_CAR,nfl
+CHI @ CAR,Sun 13 Sep 17:00,pair/conflicting,CAR +2.5 | under 47.5,2,300,309,0.9768,238,235,fitted,,,nfl:2026_01_CHI_CAR,nfl
+CHI @ CAR,Sun 13 Sep 17:00,pair/team-total,CAR +2.5 | CAR team total over 21.5,2,305,166,1.5234,119,117,fitted,,,nfl:2026_01_CHI_CAR,nfl
+CHI @ CAR,Sun 13 Sep 17:00,pair/moneyline,CAR moneyline | over 47.5,2,393,393,1.0,307,303,fitted,,,nfl:2026_01_CHI_CAR,nfl
+CHI @ CAR,Sun 13 Sep 17:00,triple/reinforcing,CAR +2.5 | over 47.5 | CAR team total over 21.5,3,329,318,1.0267,245,242,fitted,,,nfl:2026_01_CHI_CAR,nfl
+CHI @ CAR,Sun 13 Sep 17:00,triple/mixed,CAR +2.5 | under 47.5 | CAR team total over 21.5,3,682,953,0.7429,378,823,fitted,,,nfl:2026_01_CHI_CAR,nfl
+CHI @ CAR,Sun 13 Sep 17:00,quad/reinforcing,CAR +2.5 | over 47.5 | CAR team total over 21.5 | CHI team total over 23.5,4,672,778,0.8789,299,670,fitted,,,nfl:2026_01_CHI_CAR,nfl
+TB @ CIN,Sun 13 Sep 17:00,pair/team-total,CIN -3.5 | CIN team total over 27.5,2,263,139,1.5234,-103,-105,fitted,,,nfl:2026_01_TB_CIN,nfl

@@ -75,10 +75,35 @@ DESIGNS = [
                                     f"{a} team total over {at}"]),
 ]
 
+# The primary at each position and the number the book has posted for him. Props
+# are where same-game correlation is strongest -- a quarterback's yards and his
+# lead receiver's lift 1.41 together, the highest pair on the board -- and until
+# now nothing on the sheet tested them.
+_PROPS = text("""
+    WITH prim AS (
+        SELECT d.team_id, d.pos_abb, d.player_id
+        FROM depth_chart d
+        WHERE d.pos_rank = 1 AND d.pos_abb IN ('QB', 'RB', 'WR')
+          AND d.as_of = (SELECT max(as_of) FROM depth_chart x
+                          WHERE x.team_id = d.team_id)
+    )
+    SELECT p.name, prim.pos_abb, m.market_key, s.line
+    FROM prim
+    JOIN players p USING (player_id)
+    JOIN markets m ON m.player_id = prim.player_id AND m.game_id = :gid
+                  AND m.bookmaker = 'draftkings'
+                  AND m.market_key IN ('player_pass_yds', 'player_rush_yds',
+                                       'player_reception_yds')
+    JOIN LATERAL (SELECT line FROM odds_snapshots s2
+                   WHERE s2.market_id = m.market_id AND s2.outcome = 'Over'
+                   ORDER BY captured_at DESC LIMIT 1) s ON TRUE
+    WHERE prim.team_id = :team
+""")
+
 _GAMES = text("""
     SELECT g.game_id, g.league, g.kickoff,
-           ht.name AS home, ht.abbr AS home_abbr,
-           at.name AS away, at.abbr AS away_abbr,
+           ht.name AS home, ht.abbr AS home_abbr, g.home_team_id,
+           at.name AS away, at.abbr AS away_abbr, g.away_team_id,
            (SELECT s.line FROM markets m JOIN odds_snapshots s USING (market_id)
              WHERE m.game_id = g.game_id AND m.market_key = 'spreads'
                AND (s.outcome ILIKE ht.name || '%')
@@ -268,6 +293,73 @@ async def build(league: str, limit: int, as_csv: bool, repeat: bool) -> None:
                     "game_id": g["game_id"], "league": g["league"],
                 })
                 break
+
+    # Prop designs, built per game from whoever the depth chart says is primary
+    # and whatever line the book has actually posted for him.
+    async with engine.connect() as conn:
+        for g in games:
+            for side in ("home", "away"):
+                team = g[f"{side}_team_id"] if f"{side}_team_id" in g else None
+                if team is None:
+                    continue
+                props = {(r["pos_abb"], r["market_key"]): r for r in (
+                    await conn.execute(_PROPS, {"gid": g["game_id"],
+                                                "team": team})).mappings().all()}
+                qb = props.get(("QB", "player_pass_yds"))
+                wr = props.get(("WR", "player_reception_yds"))
+                rb = props.get(("RB", "player_rush_yds"))
+                designs = []
+                if qb and wr:
+                    designs.append(("prop/qb-wr", [
+                        f"{qb['name']} over {qb['line']} pass yds",
+                        f"{wr['name']} over {wr['line']} rec yds"]))
+                if qb:
+                    designs.append(("prop/qb-total", [
+                        f"{qb['name']} over {qb['line']} pass yds",
+                        f"over {g['total']}"]))
+                if rb:
+                    designs.append(("prop/rb-spread", [
+                        f"{rb['name']} over {rb['line']} rush yds",
+                        f"{g['home_abbr'] if side == 'home' else g['away_abbr']} "
+                        f"{g['spread'] if side == 'home' else -g['spread']:+g}"]))
+                if wr:
+                    # No counted surface behind an anytime touchdown, so the
+                    # estimate treats this as independent. Whatever the book
+                    # charges over that is the size of what we are missing.
+                    designs.append(("prop/atd-total", [
+                        f"{wr['name']} anytime td", f"over {g['total']}"]))
+
+                for label, raws in designs:
+                    priced, missing = [], []
+                    for r in raws:
+                        leg = await parse_leg(conn, g["game_id"], r)
+                        if not leg:
+                            missing.append(r); continue
+                        pr = await price_leg(conn, g["game_id"], leg["market_key"],
+                                             leg["outcome"], leg["line"],
+                                             "draftkings", subject=leg.get("subject"))
+                        if pr.fair_prob is None:
+                            missing.append(r); continue
+                        priced.append({**leg, "raw": r, "fair_prob": pr.fair_prob})
+                    if missing or len(priced) < 2:
+                        continue
+                    est = {b: await sgp_model.estimate(conn, league, b, priced)
+                           for b in BOOKS}
+                    first = est[BOOKS[0]]
+                    rows.append({
+                        "game": f"{g['away_abbr']} @ {g['home_abbr']}",
+                        "kickoff": g["kickoff"].strftime("%a %d %b %H:%M"),
+                        "design": label,
+                        "legs": " | ".join(l["raw"] for l in priced),
+                        "n": len(priced),
+                        "independence": first["independence_price"],
+                        "fair": first["fair_price"],
+                        "corr": first["correlation_multiplier"],
+                        **{f"est_{b}": est[b]["estimated_book_price"] for b in BOOKS},
+                        "margin_basis": first["margin"]["basis"],
+                        "actual_draftkings": "", "actual_fanduel": "",
+                        "game_id": g["game_id"], "league": g["league"],
+                    })
 
     if not rows:
         log.warning("no games with both a spread and a total quoted yet")

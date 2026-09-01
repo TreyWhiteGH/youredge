@@ -102,16 +102,29 @@ _INSERT_GAME = """
 # for this player". Roles are assigned per game by volume, which is what a book
 # does implicitly when it posts a number.
 _INSERT_PLAYER = text("""
-    WITH per_game AS (
+    -- Two sources, because the two leagues carry player production in
+    -- different tables. College has play-level participants; the NFL does not,
+    -- and reading only those produced player legs for NCAAF and none at all for
+    -- the NFL -- the league with the better data. player_game_stats holds 56,982
+    -- complete NFL rows and is simply the right source for that half.
+    per_game AS (
         SELECT pp.game_id, pp.team_id, pp.player_id,
-               sum(pp.stat) FILTER (WHERE pp.stat_type = 'Rush')      AS rush_yds,
-               count(*)     FILTER (WHERE pp.stat_type = 'Rush')      AS carries,
-               sum(pp.stat) FILTER (WHERE pp.stat_type = 'Reception') AS rec_yds,
-               count(*)     FILTER (WHERE pp.stat_type = 'Reception') AS catches,
+               sum(pp.stat) FILTER (WHERE pp.stat_type = 'Rush')       AS rush_yds,
+               count(*)     FILTER (WHERE pp.stat_type = 'Rush')       AS carries,
+               sum(pp.stat) FILTER (WHERE pp.stat_type = 'Reception')  AS rec_yds,
+               count(*)     FILTER (WHERE pp.stat_type = 'Reception')  AS catches,
                sum(pp.stat) FILTER (WHERE pp.stat_type = 'Completion') AS pass_yds,
                count(*)     FILTER (WHERE pp.stat_type = 'Completion') AS completions
         FROM play_players pp
         GROUP BY 1, 2, 3
+        UNION ALL
+        SELECT s.game_id, s.team_id, s.player_id,
+               COALESCE(s.rushing_yards, 0), COALESCE(s.carries, 0),
+               COALESCE(s.receiving_yards, 0), COALESCE(s.receptions, 0),
+               COALESCE(s.passing_yards, 0), COALESCE(s.completions, 0)
+        FROM player_game_stats s
+        JOIN games g2 ON g2.game_id = s.game_id AND g2.league = 'nfl'
+        WHERE s.team_id IS NOT NULL
     ),
     -- Role by *season* usage, not by what happened in this game. Ranking within
     -- the game makes "RB1" mean "had a big day", so the leg is judged against a

@@ -98,7 +98,11 @@ _LATEST = text("""
     JOIN odds_snapshots s ON s.market_id = m.market_id
     WHERE m.game_id = :gid AND m.market_key = :mkey
       AND s.price_american IS NOT NULL
-      AND (CAST(:subject AS text) IS NULL OR m.side_team_id = :subject)
+      -- A subject is a team for a team total and a player for a prop. The two
+      -- id namespaces do not overlap, so one parameter covers both without the
+      -- caller having to say which kind it is.
+      AND (CAST(:subject AS text) IS NULL
+           OR m.side_team_id = :subject OR m.player_id = :subject)
     ORDER BY m.bookmaker, s.outcome, s.line, s.captured_at DESC
 """)
 

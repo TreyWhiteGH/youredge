@@ -21,6 +21,7 @@ from typing import Any
 
 from sqlalchemy import text
 
+from youredge.ingest.resolve import resolve_nfl_player
 from youredge.pricing.fair_value import price_leg
 
 log = logging.getLogger(__name__)
@@ -101,7 +102,95 @@ async def parse_leg(conn, game_id: str, raw: str) -> dict[str, Any] | None:
         return {"template": "SPREAD", "side": team, "market_key": "spreads",
                 "outcome": name, "line": value}
 
-    return None
+    return await _parse_prop(conn, teams, raw, t, value)
+
+
+# What a prop leg is asking about, keyed on the words a bettor actually types.
+# Order matters: "pass tds" has to be tested before "pass yds" loses to a bare
+# "pass", and receptions before reception yards for the same reason.
+_PROP_MARKETS: list[tuple[str, str, str | None]] = [
+    (r"\b(anytime|any time)\b.*\btd\b|\batd\b", "player_anytime_td", None),
+    (r"\bpass(ing)?\s*(tds?|touchdowns?)\b", "player_pass_tds", None),
+    (r"\bpass(ing)?\s*(yds?|yards?)\b", "player_pass_yds", "QB1_PASS_YDS"),
+    (r"\brush(ing)?\s*(yds?|yards?)\b", "player_rush_yds", "RB1_RUSH_YDS"),
+    (r"\brec(eiving|eption)?\s*(yds?|yards?)\b", "player_reception_yds",
+     "WR1_REC_YDS"),
+    (r"\brecept(ions?)?\b", "player_receptions", None),
+]
+
+# Which depth-chart slot a template describes. A template is role-based --
+# QB1_PASS_YDS, not "Sam Darnold" -- because that is the only way a correlation
+# counted over three seasons can mean anything about a player who was not in the
+# league for two of them.
+_TEMPLATE_ROLE = {
+    "QB1_PASS_YDS": "QB", "RB1_RUSH_YDS": "RB", "WR1_REC_YDS": "WR",
+}
+
+_ROLE = text("""
+    SELECT 1 FROM depth_chart d
+    WHERE d.team_id = :team AND d.player_id = :pid
+      AND d.pos_abb = :pos AND d.pos_rank = 1
+      AND d.as_of = (SELECT max(as_of) FROM depth_chart WHERE team_id = :team)
+    LIMIT 1
+""")
+
+
+async def _parse_prop(conn, teams, raw: str, t: str, value: float | None):
+    """A player leg: which market, which player, and whether we can correlate it.
+
+    Two separate questions, and conflating them would be the mistake. Whether the
+    leg can be *priced* depends only on the player and the market. Whether it can
+    be *correlated* depends on the player holding the role the counted surface is
+    built on — there is no WR3_REC_YDS in leg_pair_stats, and borrowing WR1's
+    number for a third receiver would be inventing one.
+    """
+    market_key = template = None
+    for pattern, mkey, tpl in _PROP_MARKETS:
+        if re.search(pattern, t):
+            market_key, template = mkey, tpl
+            break
+    if not market_key:
+        return None
+
+    # Everything before the first market word, minus the over/under and number,
+    # is the player's name as typed.
+    name = re.split(r"\b(over|under|anytime|any time|pass|rush|rec|recept)", t)[0]
+    name = re.sub(r"[+-]?\d+(\.\d+)?", "", name).strip(" ,-")
+    if len(name) < 3:
+        return None
+
+    player_id = await resolve_nfl_player(conn, name)
+    if not player_id:
+        return None
+
+    row = (await conn.execute(text("""
+        SELECT p.player_id, p.name, p.team_id FROM players p WHERE p.player_id = :pid
+    """), {"pid": player_id})).mappings().first()
+    if not row or row["team_id"] not in (teams["home_team_id"], teams["away_team_id"]):
+        return None
+    side = "home" if row["team_id"] == teams["home_team_id"] else "away"
+
+    # Only the primary at a position has a counted surface. A leg on anyone else
+    # is still priced; it simply carries no correlation, and says so rather than
+    # borrowing a number that describes someone else.
+    if template:
+        pos = _TEMPLATE_ROLE[template]
+        is_primary = (await conn.execute(
+            _ROLE, {"team": row["team_id"], "pid": player_id, "pos": pos})).first()
+        if not is_primary:
+            template = None
+
+    ou = "under" if "under" in t else "over"
+    return {
+        "template": template,
+        "side": f"{side}_{ou}" if template else side,
+        "market_key": market_key,
+        "outcome": "Yes" if market_key == "player_anytime_td" else ou.capitalize(),
+        "line": None if market_key == "player_anytime_td" else value,
+        "subject": player_id,
+        "player": row["name"],
+        "correlatable": template is not None,
+    }
 
 
 async def critique(conn, game_id: str, league: str, sportsbook: str,

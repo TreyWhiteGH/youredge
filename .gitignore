@@ -71,3 +71,4 @@ backups/
 
 # Production secrets. Same rule as .env: never committed.
 .env.prod
+.neon

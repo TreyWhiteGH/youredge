@@ -102,7 +102,10 @@ database being at Neon is a deliberate hedge against exactly that.
 
 ```bash
 ssh root@YOUR_IP
-apt update && apt install -y docker.io docker-compose-plugin git
+# docker-compose-v2, not docker-compose-plugin: the latter is the package name
+# in Docker's own apt repository, and Ubuntu ships the same thing under its own
+# name. `apt` fails with "unable to locate package" and no hint as to why.
+apt update && apt install -y docker.io docker-compose-v2 git
 git clone https://github.com/TreyWhiteGH/youredge.git && cd youredge
 ```
 

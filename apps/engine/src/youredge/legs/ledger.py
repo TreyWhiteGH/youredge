@@ -102,6 +102,7 @@ _INSERT_GAME = """
 # for this player". Roles are assigned per game by volume, which is what a book
 # does implicitly when it posts a number.
 _INSERT_PLAYER = text("""
+    WITH
     -- Two sources, because the two leagues carry player production in
     -- different tables. College has play-level participants; the NFL does not,
     -- and reading only those produced player legs for NCAAF and none at all for

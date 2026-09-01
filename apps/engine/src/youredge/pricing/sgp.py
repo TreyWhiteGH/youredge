@@ -35,11 +35,24 @@ from youredge.pricing.implications import entailed
 
 log = logging.getLogger(__name__)
 
-# Per-leg hold used until a book has enough observed quotes to fit. Books charge
-# noticeably more on a same-game parlay than on the straights inside it; 4.5% a
-# leg compounds to ~9% on two and ~19% on four, which is the band the public
-# numbers sit in. It is a placeholder with a number attached, not a measurement.
-PRIOR_LEG_MARGIN = 0.045
+# The prior, now measured rather than assumed. Forty-three quotes across
+# DraftKings and FanDuel put the two-leg hold at 16% and the three-leg hold at
+# 21% -- against a first guess of 9% and 14%, which was too low at both.
+#
+# It also does not compound geometrically, which the first version assumed: 4.5%
+# a leg would put three legs at 14% and four at 19%, and the measured step from
+# two legs to three is about five points, not the eight that compounding
+# predicts. So the prior is a base plus a per-leg increment, and both numbers
+# come from observation.
+#
+# This is still a prior. A book with twelve quotes at a given risk-leg count
+# stops using it, and the response says which applied.
+PRIOR_BASE_MARGIN = 0.16
+PRIOR_PER_EXTRA_LEG = 0.05
+
+
+def prior_margin(n_legs: int) -> float:
+    return PRIOR_BASE_MARGIN + PRIOR_PER_EXTRA_LEG * max(0, n_legs - 2)
 # Below this many observed quotes for a (book, leg-count) cell, the prior stands.
 MIN_QUOTES_TO_FIT = 12
 
@@ -156,7 +169,7 @@ async def book_margin(conn, league: str, book: str, n_legs: int) -> dict[str, An
     gets, entailment included, and cells are keyed on the number of legs that
     actually carry risk rather than the number typed in.
     """
-    prior = (1 + PRIOR_LEG_MARGIN) ** n_legs - 1
+    prior = prior_margin(n_legs)
     rows = (await conn.execute(_FIT, {"book": book})).mappings().all()
 
     ratios = []

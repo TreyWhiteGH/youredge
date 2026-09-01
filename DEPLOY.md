@@ -6,11 +6,13 @@ box is disposable and the database is not, because `odds_snapshots` records line
 movement that cannot be re-fetched at any price and `user_bets` holds quotes
 collected by hand from sportsbooks.
 
-Hetzner CPX31 in Ashburn for the compute, Neon for Postgres. Roughly 45 minutes
-end to end, most of it waiting for a restore.
+IONOS VPS in Newark for the compute, Neon for Postgres. Roughly 45 minutes end
+to end, most of it waiting for a restore.
 
-Running cost is about **$19-25/mo** for the box, **~$19/mo** for a 10 GB Neon
-tier and **~$12/yr** for the domain. Once the reasoning layer is in, the
+Running cost is about **$15/mo** for the box (roughly $10 for the first six
+months, then it steps up -- IONOS discounts heavily up front and adjusted prices
+in 2026, so read the renewal rate rather than the headline), **~$19/mo** for a
+10 GB Neon tier and **~$12/yr** for the domain. Once the reasoning layer is in, the
 Anthropic bill will make all three a rounding error -- which is the real reason
 not to spend long optimising this part.
 
@@ -19,10 +21,10 @@ not to spend long optimising this part.
 ## 1. Database first
 
 Create a Postgres 16 instance at **Neon**, region **AWS us-east**, to sit near
-the Ashburn box. You need about 10 GB: the dump is 126 MB but restores to ~3 GB
+the Newark box. You need about 10 GB: the dump is 126 MB but restores to ~3 GB
 and grows with every poll.
 
-Neon over Hetzner's own managed Postgres deliberately. IONOS and most hosts keep
+Neon rather than IONOS's own managed Postgres, deliberately. IONOS keeps
 write-ahead logs for seven days, and the failure this data actually faces is not
 a dead disk -- it is a bad migration or a `--rebuild` against the wrong URL,
 which you might not notice in a week. Neon also branches, so a migration can be
@@ -61,24 +63,31 @@ you work.
 
 ## 3. The box
 
-**Hetzner Cloud, CPX31, Ashburn (us-east)** — 4 vCPU, 8 GB, 160 GB NVMe, 3 TB
-traffic, IPv4 included. Around $19-25/mo after the 2026 price rise; check the
-figure at checkout rather than trusting this file. It is more machine than this
-needs today and leaves room for the mining jobs.
+**IONOS VPS Linux L, Newark** — 4 cores, 8 GB, 240 GB NVMe, unmetered traffic.
+Newark rather than Lenexa or Las Vegas: it is the US East site, which keeps the
+engine close to the database.
 
-Ubuntu 24.04. In the Hetzner console, add an SSH key at creation — password
-login on a fresh public IP is found by scanners within minutes.
+"Unlimited bandwidth" is unmetered under a fair-use policy rather than genuinely
+uncapped. Irrelevant at this scale -- a few hundred API calls a day and one
+frontend -- but worth knowing it is a policy and not a guarantee.
 
-Attach a **cloud firewall** (free, and applied outside the machine so a
-misconfigured host cannot undo it):
+Ubuntu 24.04. Add an SSH key when you create the machine; password login on a
+fresh public IP is found by scanners within minutes.
 
-| Direction | Port | Source |
-|---|---|---|
-| inbound | 22 | your IP only |
-| inbound | 80, 443 | anywhere |
+Restrict inbound traffic in the IONOS Cloud Panel firewall:
 
-Nothing else. Postgres is not on this box and nothing here listens on 5432 —
+| Port | Source |
+|---|---|
+| 22 | your IP only |
+| 80, 443 | anywhere |
+
+Nothing else. Postgres is not on this box and nothing here listens on 5432 --
 if you ever find yourself opening that port, something has gone wrong.
+
+A note on consolidation. IONOS also sells domains, and registering yours there
+is convenient. It also means one account holds the machine, the DNS and the
+billing, so a lockout takes out your ability to move as well as the site. The
+database being at Neon is a deliberate hedge against exactly that.
 
 ```bash
 ssh root@YOUR_IP
@@ -86,10 +95,10 @@ apt update && apt install -y docker.io docker-compose-plugin git
 git clone https://github.com/TreyWhiteGH/youredge.git && cd youredge
 ```
 
-Hetzner's Ashburn region and Neon's `aws-us-east-2` are both US East, which
-keeps the engine a few milliseconds from its database. Putting the box in
-Europe and the database in Virginia would add a transatlantic round trip to
-every query, and this engine issues a lot of small ones.
+Newark and Neon's `aws-us-east` are both US East, which keeps the engine a few
+milliseconds from its database. This engine issues many small queries rather
+than a few large ones, so latency between the two compounds in a way total
+bandwidth never will.
 
 ## 4. Configure
 

@@ -175,3 +175,37 @@ ingest-rankings:
 # Team colours and logo references (ESPN public teams endpoint).
 ingest-team-identity:
 	docker compose run --rm ingest python -m youredge.ingest.team_identity
+
+# ---------------------------------------------------------------------------
+# Live capture (SportsGameOdds) and its ingest.
+#
+# These run against docker-compose.prod.yml, unlike everything above, because
+# live capture only exists in production -- one poller, one key, one copy of
+# line movement that cannot be re-fetched. PROD is a variable so a staging
+# stack can borrow the same targets.
+PROD ?= docker compose -f docker-compose.prod.yml
+
+# Is the capture actually capturing? Reads the files rather than the process
+# list: prices moved and clocks advanced, not "a PID exists".
+capture-health:
+	$(PROD) run --rm capture python -m youredge.ingest.capture_health
+
+capture-logs:
+	$(PROD) logs -f capture
+
+# How far back to read captures. Override per invocation: `make sgo-dry SINCE=2h`.
+SINCE ?= 30m
+
+# Parse, resolve and decide, writing nothing -- resolution is rolled back too.
+# Check `unresolved` before letting the real one write.
+sgo-dry:
+	$(PROD) run --rm capture python -m youredge.ingest.sgo_ingest --since $(SINCE) --dry-run
+
+# Raw captures -> markets/odds_snapshots. Stores changes rather than samples and
+# only for games in progress; re-runnable over the same files, since the inserts
+# are ON CONFLICT DO NOTHING.
+sgo-ingest:
+	$(PROD) run --rm capture python -m youredge.ingest.sgo_ingest --since $(SINCE)
+
+sgo-ingest-loop:
+	$(PROD) run --rm capture python -m youredge.ingest.sgo_ingest --loop

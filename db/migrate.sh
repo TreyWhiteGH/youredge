@@ -17,7 +17,40 @@ DB_USER="${POSTGRES_USER:-youredge}"
 DB_NAME="${POSTGRES_DB:-youredge}"
 BASELINE="021_career_links.sql"   # last migration that shipped before the tracker
 
-psql() { docker compose exec -T db psql -U "$DB_USER" -d "$DB_NAME" -v ON_ERROR_STOP=1 "$@"; }
+# Two databases to reach, and only one of them is a container.
+#
+# Development runs Postgres in compose as `db`. Production does not: the whole point
+# of docker-compose.prod.yml is that the data lives at a managed provider, so there is
+# no `db` service to exec into and every psql here failed with "no such service" --
+# which meant DEPLOY.md's instruction to run this against the managed URL, both on
+# first deploy and on every schema change after, could not work as written.
+#
+# So: if a URL is given, talk to it through a throwaway psql container; otherwise fall
+# back to the compose service. MIGRATE_DATABASE_URL wins over DATABASE_URL so that
+# pointing a migration at a Neon branch is a one-off env var rather than an edit.
+#
+# The engine's DATABASE_URL carries SQLAlchemy's `+asyncpg` driver tag and libpq has
+# never heard of it, so it is stripped here rather than requiring a second spelling of
+# the same secret in .env.prod.
+RAW_URL="${MIGRATE_DATABASE_URL:-${DATABASE_URL:-}}"
+DB_URL="${RAW_URL/+asyncpg/}"
+
+# Pinned to the major version production runs (DEPLOY.md step 1). A newer client is
+# fine against an older server, but pinning means the tool that applies a migration is
+# never a surprise.
+PSQL_IMAGE="${PSQL_IMAGE:-postgres:18-alpine}"
+
+if [ -n "$DB_URL" ]; then
+    echo "==> target: managed database (from ${MIGRATE_DATABASE_URL:+MIGRATE_}DATABASE_URL)"
+    psql_raw() { docker run --rm -i -e PGCONNECT_TIMEOUT=15 "$PSQL_IMAGE" \
+                     psql "$DB_URL" -v ON_ERROR_STOP=1 "$@"; }
+else
+    echo "==> target: local compose service 'db'"
+    psql_raw() { docker compose exec -T db psql -U "$DB_USER" -d "$DB_NAME" \
+                     -v ON_ERROR_STOP=1 "$@"; }
+fi
+
+psql() { psql_raw "$@"; }
 
 psql -q -c "CREATE TABLE IF NOT EXISTS schema_migrations (
     filename   TEXT PRIMARY KEY,
@@ -54,8 +87,7 @@ for f in $(ls db/migrations/*.sql | sort); do
     # stream: a failure leaves no half-applied file and no tracker row, so a
     # re-run retries it cleanly.
     { cat "$f"; printf "\nINSERT INTO schema_migrations (filename) VALUES ('%s');\n" "$name"; } \
-        | docker compose exec -T db psql -U "$DB_USER" -d "$DB_NAME" \
-            -v ON_ERROR_STOP=1 --single-transaction -q -f -
+        | psql_raw --single-transaction -q -f -
     applied=$((applied + 1))
 done
 

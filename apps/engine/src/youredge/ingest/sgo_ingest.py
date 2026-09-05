@@ -183,20 +183,42 @@ async def resolve_event(conn, league: str, ev: dict) -> tuple[str | None, str | 
     return row[0], home, away
 
 
-_UPSERT_MARKET = text("""
-    INSERT INTO markets (game_id, bookmaker, market_key, player_id, player_name, side_team_id)
-    VALUES (:gid, :bm, :mk, NULL, :pname, :side)
-    ON CONFLICT (game_id, bookmaker, market_key, player_id, player_name) DO UPDATE
-      SET side_team_id = COALESCE(EXCLUDED.side_team_id, markets.side_team_id)
-    RETURNING market_id
-""")
-
 _INSERT_SNAPSHOT = text("""
     INSERT INTO odds_snapshots
         (market_id, captured_at, outcome, line, price_american, implied_prob,
          is_live, source)
     VALUES (:mid, :at, :outcome, :line, :price, :prob, :live, 'sgo')
     ON CONFLICT DO NOTHING
+""")
+
+# Markets are created in bulk and read back in bulk, rather than upserted one at a
+# time with RETURNING. Neon is a network hop away: the per-row version issued one
+# round trip per market and one per snapshot, and measured against a real slate it
+# ingested 2m18s of captures in 7 minutes -- three times slower than the 20-second
+# cadence it is supposed to keep up with. The work was never the database's; it was
+# 20ms of latency, tens of thousands of times.
+#
+# Two statements per game instead: insert what is missing, then select the ids back.
+_INSERT_MARKETS_BULK = text("""
+    INSERT INTO markets (game_id, bookmaker, market_key, player_id, player_name, side_team_id)
+    SELECT :gid, :bm, :mk, NULL, :pname, :side
+    ON CONFLICT (game_id, bookmaker, market_key, player_name) DO NOTHING
+""")
+
+_SELECT_MARKETS = text("""
+    SELECT market_id, bookmaker, market_key, player_name
+    FROM markets WHERE game_id = :gid
+""")
+
+# One prime per game rather than per market. DISTINCT ON still splits by rung, which
+# is the part that matters: without the per-(outcome, line) split the first row of a
+# ladder is compared against a neighbouring rung and every rung looks like a move.
+_PRIME_GAME = text("""
+    SELECT DISTINCT ON (s.market_id, s.outcome, s.line)
+           s.market_id, s.outcome, s.line, s.price_american
+    FROM odds_snapshots s JOIN markets m USING (market_id)
+    WHERE m.game_id = :gid
+    ORDER BY s.market_id, s.outcome, s.line, s.captured_at DESC
 """)
 
 
@@ -257,7 +279,12 @@ class Ingestor:
             "unresolved_game": 0,
             "skipped_not_fbs": 0, "skipped_not_live": 0, "unmapped_odds": 0,
             "quotes_seen": 0, "quotes_offbook": 0, "rows": 0, "unchanged": 0,
+            "market_missing": 0,
         }
+        # Games whose markets have been created and whose last prices are loaded.
+        # Primed once per process, not once per capture file -- there are 180 files
+        # an hour describing the same slate.
+        self._primed: set[str] = set()
 
     async def _fbs(self, conn, home: str, away: str) -> bool:
         """At least one FBS side.
@@ -282,31 +309,40 @@ class Ingestor:
             )).scalar()
         return self._abbr[team_id]
 
-    async def _market_id(self, conn, gid, book, key, pname, side) -> int:
-        ck = (gid, book, key, pname)
-        if ck not in self._market_ids:
-            self._market_ids[ck] = (await conn.execute(_UPSERT_MARKET, {
-                "gid": gid, "bm": book, "mk": key, "pname": pname, "side": side,
-            })).scalar_one()
-        return self._market_ids[ck]
+    async def _load_game(self, conn, gid: str, wanted: list[dict]) -> None:
+        """Ensure every market this game needs exists, and prime its last prices.
 
-    async def _prime(self, conn, market_id: int) -> None:
-        """Load the newest stored price per (outcome, line) for one market.
-
-        DISTINCT ON is the whole point: a market has many rungs and each needs its
-        own baseline, and without the per-rung split the first row for a ladder
-        would be compared against a neighbouring rung's price and look like a move.
+        Three statements for a whole game, whatever its market count: create the
+        missing markets, read their ids back, then load the newest stored price per
+        rung. The version this replaces did two round trips per market and one per
+        snapshot, which is the difference between keeping up with a 20-second
+        cadence and falling three times behind it.
         """
-        rows = (await conn.execute(
-            text("""
-                SELECT DISTINCT ON (outcome, line) outcome, line, price_american
-                FROM odds_snapshots WHERE market_id = :mid
-                ORDER BY outcome, line, captured_at DESC
-            """),
-            {"mid": market_id},
-        )).all()
-        for outcome, line, price in rows:
-            self._last[(market_id, outcome, line)] = (price, line)
+        missing = [w for w in wanted
+                   if (gid, w["bm"], w["mk"], w["pname"]) not in self._market_ids]
+        if not missing and gid in self._primed:
+            # Steady state: every market this capture needs is already known and the
+            # last prices are in memory. Nothing to ask the database.
+            return
+
+        if missing:
+            # executemany: one statement, one round trip, N parameter sets.
+            await conn.execute(_INSERT_MARKETS_BULK,
+                               [{"gid": gid, **w} for w in missing])
+            for mid, bm, mk, pname in (
+                await conn.execute(_SELECT_MARKETS, {"gid": gid})
+            ).all():
+                self._market_ids[(gid, bm, mk, pname)] = mid
+
+        if gid not in self._primed:
+            # Only on first sight. Afterwards `_last` is authoritative because this
+            # process is the only writer of source='sgo' rows, and re-reading it per
+            # capture would put the round trips straight back.
+            for mid, outcome, line, price in (
+                await conn.execute(_PRIME_GAME, {"gid": gid})
+            ).all():
+                self._last[(mid, outcome, line)] = (price, line)
+            self._primed.add(gid)
 
     async def ingest_file(self, conn, path: Path) -> None:
         try:
@@ -337,6 +373,15 @@ class Ingestor:
             if not home or not away:
                 self.stats["skipped_unknown_team"] += 1
                 continue
+            # Division is checked before the game lookup, not after. FCS-versus-FCS
+            # fixtures resolve both teams -- migration 012 keeps FCS programs as
+            # crossover opponents -- and then find no game row, because our schedule
+            # does not carry games between two of them. Checking afterwards filed
+            # 105 of those under unresolved_game, which is meant to mean "our gap"
+            # and is worth nothing if a whole division's fixtures land in it.
+            if league == "ncaaf" and not await self._fbs(conn, home, away):
+                self.stats["skipped_not_fbs"] += 1
+                continue
             if not gid:
                 # Both teams are ones we know, so a missing game is our gap rather
                 # than SGO covering a division we do not. Logged with names because
@@ -350,15 +395,44 @@ class Ingestor:
                     (ev.get("status") or {}).get("startsAt"),
                 )
                 continue
-            if league == "ncaaf" and not await self._fbs(conn, home, away):
-                self.stats["skipped_not_fbs"] += 1
-                continue
             await self._ingest_event(conn, ev, gid, home, away, captured_at, live)
 
     async def _ingest_event(self, conn, ev, gid, home, away, captured_at, live) -> None:
         habbr = await self._abbr_of(conn, home)
         aabbr = await self._abbr_of(conn, away)
+        players = ev.get("players") or {}
 
+        # Walked twice on purpose. The first pass decides which markets this game
+        # needs so they can all be created in one statement; the second, below,
+        # builds the snapshot rows now that every market id is known. Interleaving
+        # them is what forced a round trip per market.
+        if not self.dry_run:
+            wanted, seen = [], set()
+            for odd in (ev.get("odds") or {}).values():
+                key = M.market_key(odd)
+                if not key:
+                    continue
+                entity = odd.get("statEntityID")
+                pname = (((players.get(entity) or {}).get("name")) or entity) \
+                    if M.is_player(entity) else None
+                side = {"home": home, "away": away}.get(entity)
+                for book in (odd.get("byBookmaker") or {}):
+                    if book not in self.books:
+                        continue
+                    ck = (book, key, pname)
+                    if ck in seen:
+                        continue
+                    seen.add(ck)
+                    wanted.append({"bm": book, "mk": key, "pname": pname, "side": side})
+            # Recomputed every capture, not once per game. A slate is not a fixed
+            # set of markets: books post props and alternate rungs while the game
+            # runs, so a game primed at kickoff is missing whatever appeared since.
+            # Priming once dropped 4,598 quotes in twelve minutes -- counted as
+            # market_missing, and never recovered, because the guard that skipped
+            # the reprime is also what kept them missing.
+            await self._load_game(conn, gid, wanted)
+
+        pending: list[dict] = []
         for odd in (ev.get("odds") or {}).values():
             key = M.market_key(odd)
             if not key:
@@ -369,7 +443,15 @@ class Ingestor:
                 continue
 
             entity = odd.get("statEntityID")
-            player_name = entity if M.is_player(entity) else None
+            # The display name, not SGO's player id. markets is keyed on player_name
+            # (024), and odds_poller writes what the book called him -- "Sam Darnold".
+            # Writing `SAM_DARNOLD_1_NFL` here would give the same player two market
+            # rows, one per feed, and split his line movement down the middle. The
+            # event's `players` block carries the name; the id is the fallback for
+            # the rare odd whose subject is missing from it.
+            player_name = None
+            if M.is_player(entity):
+                player_name = ((players.get(entity) or {}).get("name")) or entity
             side = {"home": home, "away": away}.get(entity)
 
             for book, quote in (odd.get("byBookmaker") or {}).items():
@@ -389,19 +471,28 @@ class Ingestor:
                     self.stats["rows"] += 1
                     continue
 
-                mid = await self._market_id(conn, gid, book, key, player_name, side)
+                mid = self._market_ids.get((gid, book, key, player_name))
+                if mid is None:
+                    # The market could not be created or read back -- almost always
+                    # a book/market pair that appeared inside this same file, after
+                    # the first pass built the list. It will exist next capture.
+                    self.stats["market_missing"] += 1
+                    continue
                 ck = (mid, outcome, line)
-                if ck not in self._last:
-                    await self._prime(conn, mid)
                 if self._last.get(ck, (None, None))[0] == price:
                     self.stats["unchanged"] += 1
                     continue
-                await conn.execute(_INSERT_SNAPSHOT, {
+                pending.append({
                     "mid": mid, "at": captured_at, "outcome": outcome, "line": line,
                     "price": price, "prob": M.implied(price), "live": live,
                 })
                 self._last[ck] = (price, line)
                 self.stats["rows"] += 1
+
+        # One statement for the whole event's changes. This is where the latency
+        # went: a slate with 200 moved prices was 200 sequential round trips.
+        if pending:
+            await conn.execute(_INSERT_SNAPSHOT, pending)
 
 
 async def run(since: timedelta, books: tuple[str, ...], live_only: bool,

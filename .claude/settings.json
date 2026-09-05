@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(make *)",
+      "Bash(bash db/migrate.sh*)",
+      "Bash(./db/migrate.sh*)",
+      "Bash(docker compose -f docker-compose.prod.yml up *)",
+      "Bash(docker compose -f docker-compose.prod.yml run *)",
+      "Bash(docker compose -f docker-compose.prod.yml exec *)",
+      "Bash(docker compose -f docker-compose.prod.yml build *)",
+      "Bash(docker compose -f docker-compose.prod.yml logs *)",
+      "Bash(docker compose -f docker-compose.prod.yml ps*)",
+      "Bash(docker compose -f docker-compose.prod.yml restart *)",
+      "Bash(docker logs *)",
+      "Bash(docker ps*)",
+      "Bash(docker run --rm *)",
+      "Bash(docker stats --no-stream*)"
+    ]
+  }
+}

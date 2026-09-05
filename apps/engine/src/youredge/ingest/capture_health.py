@@ -35,9 +35,9 @@ from pathlib import Path
 OUT_ROOT = Path(os.environ.get("SGO_CAPTURE_DIR", "/var/lib/youredge/sgo_raw"))
 LEAGUES = ("ncaaf", "nfl")
 
-# Capture runs at 40s. Two missed ticks is noise -- a slow upstream, a rebuild -- and
-# five minutes is not: that is a dead loop, and on a Saturday it is a real hole.
-STALE_WARN = timedelta(seconds=150)
+# Capture runs at 20s. A few missed ticks is noise -- a slow upstream, a rebuild --
+# and five minutes is not: that is a dead loop, and on a Saturday it is a real hole.
+STALE_WARN = timedelta(seconds=90)
 STALE_FAIL = timedelta(minutes=5)
 
 # Movement is bursty. One 40s tick can legitimately show nothing on a quiet drive, so

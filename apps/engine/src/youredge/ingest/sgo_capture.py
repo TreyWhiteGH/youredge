@@ -51,10 +51,16 @@ LEAGUES = ("NCAAF", "NFL")
 WINDOW_BEFORE = timedelta(days=1)
 WINDOW_AFTER = timedelta(days=2)
 
-# The whole point is the in-game path, so this wants to be short. 40s at 85 events
-# is 3% of the hourly entity budget; the reason not to go lower is the 10 MB body,
-# not the quota.
-DEFAULT_INTERVAL = 40.0
+# The whole point is the in-game path, so this wants to be short. Measured against a
+# live Saturday, 40s spent 4,070 of a 250,000/hour entity allowance -- 1.6% -- so
+# quota was never what bounded this. The 12.9 MB body was, and requesting gzip took
+# it to 1.1 MB, which is why 20s now costs less bandwidth than 40s did.
+#
+# Not lower than this without measuring first. Pro is documented as "sub-minute
+# update frequency", so past some point the extra polls return the same numbers and
+# buy nothing but disk. 20s samples comfortably inside that and leaves the feed,
+# rather than us, as the thing setting the resolution.
+DEFAULT_INTERVAL = 20.0
 
 # SGO caps a page at 100 events no matter what `limit` asks for, and says so only by
 # returning a `nextCursor`. Asking for 250 does not fail -- it silently hands back
@@ -103,9 +109,21 @@ SGO_USER_AGENT = "youredge/1.0"
 
 
 def _get_json(url: str, headers: dict, timeout: float) -> dict:
-    req = urllib.request.Request(url, headers=headers)
+    """GET and decode JSON, asking for it compressed.
+
+    urllib does not negotiate compression on its own, and these bodies are mostly
+    repeated key names, so the difference is not marginal: the college slate is
+    12.9 MB uncompressed and 1.1 MB gzipped, an 11x saving on every poll. That is
+    what makes a 20-second cadence cheaper in bandwidth than 40 seconds was without
+    it. `decompress` handles the header itself because urllib hands back the raw
+    stream, and the fallback covers a proxy that strips the encoding.
+    """
+    req = urllib.request.Request(url, headers={**headers, "Accept-Encoding": "gzip"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+        raw = r.read()
+        if r.headers.get("Content-Encoding") == "gzip":
+            raw = gzip.decompress(raw)
+        return json.loads(raw.decode())
 
 
 def _get(path: str, params: dict, key: str, timeout: float = 60.0) -> dict:

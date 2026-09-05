@@ -43,7 +43,7 @@ services:
     env_file: .env.prod
     volumes:
       - /var/lib/youredge/sgo_raw:/var/lib/youredge/sgo_raw
-    command: ["python", "-m", "youredge.ingest.sgo_capture", "--interval", "40"]
+    command: ["python", "-m", "youredge.ingest.sgo_capture", "--interval", "20"]
 
   # Runs once, copies the built frontend into a volume, exits. Caddy serves
   # that volume. A one-shot rather than a server because the frontend is static

@@ -87,22 +87,30 @@ def _api_key() -> str:
     raise SystemExit("SGO_API_KEY not set and not found in .env.prod")
 
 
-# SGO sits behind Cloudflare, which 403s urllib's default `Python-urllib/3.12`
-# agent before the request reaches the API -- the key is never consulted, so the
-# failure looks like an auth problem and is not one. Any other agent passes;
-# curl's default and this one both return 200. Note this is the opposite of the
-# ESPN rule in api/routes/live.py, where a *browser* string is what gets refused.
-# Neither WAF wants to be lied to; they just disagree about what a lie looks like.
-USER_AGENT = "youredge/1.0"
+# The two upstreams disagree about what a trustworthy client looks like, and both
+# express it as a 403 that never reaches their application:
+#
+#   * SGO is behind Cloudflare, which refuses urllib's default `Python-urllib/3.12`
+#     before the key is consulted -- so the failure reads as an auth problem and is
+#     not one. `youredge/1.0` passes.
+#   * ESPN refuses `youredge/1.0` and accepts urllib's default, curl's, or none at
+#     all. api/routes/live.py documents the browser half of this rule; the part that
+#     matters here is that an unrecognised *custom* agent is refused too.
+#
+# `curl/8.5.0` happens to satisfy both, and is not used: claiming to be curl is a
+# lie that works until it doesn't. Each host gets a header that is true instead.
+SGO_USER_AGENT = "youredge/1.0"
+
+
+def _get_json(url: str, headers: dict, timeout: float) -> dict:
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read().decode())
 
 
 def _get(path: str, params: dict, key: str, timeout: float = 60.0) -> dict:
     url = f"{BASE}/{path}?{urllib.parse.urlencode(params)}"
-    req = urllib.request.Request(
-        url, headers={"X-Api-Key": key, "User-Agent": USER_AGENT}
-    )
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.loads(r.read().decode())
+    return _get_json(url, {"X-Api-Key": key, "User-Agent": SGO_USER_AGENT}, timeout)
 
 
 def fetch_slate(league: str, key: str, now: datetime) -> dict:
@@ -141,6 +149,62 @@ def fetch_slate(league: str, key: str, now: datetime) -> dict:
     return {"success": True, "data": events, "pages": pages}
 
 
+# ESPN's scoreboard, fetched in the same tick as the odds. Score, clock, down and
+# distance, possession and last play -- what the game looked like at the instant a
+# price was recorded.
+#
+# The alignment is the reason this lives in the odds loop rather than in a process
+# of its own. Play-by-play backfills from CFBD after the whistle, so the plays are
+# never really at risk; what cannot be reconstructed afterwards is *which* game
+# state a given line was reacting to, because neither feed carries the other's
+# timestamps. Fetching both inside one tick makes that join exact instead of a
+# nearest-neighbour guess against clocks that drift.
+ESPN_SCOREBOARD = {
+    "NFL": "https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard",
+    "NCAAF": "https://site.api.espn.com/apis/site/v2/sports/football/college-football/scoreboard",
+}
+# groups=80 is all of FBS. ESPN's default page is the featured handful, and the
+# college board is the whole FBS+FCS field, so both parameters are load-bearing.
+ESPN_PARAMS = {"NCAAF": {"groups": "80", "limit": "200"}}
+
+
+def fetch_state(league: str, now: datetime) -> dict | None:
+    """Live scoreboard for one league, or None if ESPN is unreachable.
+
+    Returns None rather than raising: a scoreboard we could not read is a missing
+    column on one row, while a raised exception here would cost the odds capture
+    for the same tick -- and the odds are the half that cannot be re-fetched.
+    """
+    url = ESPN_SCOREBOARD.get(league)
+    if not url:
+        return None
+    params = {"dates": now.strftime("%Y%m%d"), **ESPN_PARAMS.get(league, {})}
+    try:
+        # No User-Agent override on purpose -- see the note above.
+        return _get_json(f"{url}?{urllib.parse.urlencode(params)}", {}, timeout=20.0)
+    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError,
+            json.JSONDecodeError) as e:
+        log.warning("%s: scoreboard fetch failed: %s", league, e)
+        return None
+
+
+def summarize_state(state: dict | None) -> dict:
+    """In-progress counts from the scoreboard, for the log line.
+
+    ESPN's `state` field is authoritative about what is being played right now,
+    which SGO's own status block is not -- games four minutes past kickoff still
+    report `started: false` there. So this is what the log reports as live.
+    """
+    if not state:
+        return {"in": 0, "pre": 0, "post": 0}
+    out = {"in": 0, "pre": 0, "post": 0}
+    for e in state.get("events") or []:
+        s = ((e.get("status") or {}).get("type") or {}).get("state")
+        if s in out:
+            out[s] += 1
+    return out
+
+
 def summarize(payload: dict) -> dict:
     """Cheap counts for the log line, so a bad capture is visible without opening it.
 
@@ -155,7 +219,8 @@ def summarize(payload: dict) -> dict:
     return {"events": len(events), "live": live, "started": started, "odds": odds}
 
 
-def write_capture(league: str, payload: dict, captured_at: datetime) -> Path:
+def write_capture(league: str, payload: dict, captured_at: datetime,
+                  state: dict | None = None) -> Path:
     """One file per league per poll, gzipped, named by UTC epoch seconds.
 
     Partitioned by date so a day can be moved off the box or replayed on its own.
@@ -172,11 +237,17 @@ def write_capture(league: str, payload: dict, captured_at: datetime) -> Path:
     # captured_at is recorded inside the file as well as in its name. The name is a
     # convenience; the envelope is what the ingest job trusts, since files get
     # copied, renamed and re-sorted and a timestamp in a filename is a guess.
+    # `payload` is the SGO body and `state` the ESPN one, side by side under a
+    # single captured_at. Files written before scoreboard capture existed have no
+    # `state` key at all, so the ingest job must treat it as optional rather than
+    # assume every capture has both halves.
     envelope = {
         "captured_at": captured_at.isoformat(),
         "league": league,
         "source": "sportsgameodds/v2/events",
         "payload": payload,
+        "state_source": "espn/scoreboard",
+        "state": state,
     }
     with gzip.open(partial, "wt", encoding="utf-8", compresslevel=6) as fh:
         json.dump(envelope, fh, separators=(",", ":"))
@@ -202,11 +273,20 @@ def capture_once(key: str, leagues: tuple[str, ...]) -> None:
             log.warning("%s: api reported failure: %s", league, str(payload)[:200])
             continue
 
+        # Fetched after the odds and stored under the same captured_at. The gap is
+        # a second or two of an event that lasts three hours, which is well inside
+        # the resolution anything downstream will ask of it.
+        state = fetch_state(league, now)
         s = summarize(payload)
-        path = write_capture(league, payload, now)
-        log.info("%s: %d events (%d live, %d started), %d odds, %d page(s) -> %s (%.1f MB)",
-                 league, s["events"], s["live"], s["started"], s["odds"],
-                 payload.get("pages", 1), path.name, path.stat().st_size / 1e6)
+        st = summarize_state(state)
+        path = write_capture(league, payload, now, state)
+        log.info(
+            "%s: %d events, %d odds, %d page(s) | scoreboard %s (%d in, %d pre, %d post)"
+            " -> %s (%.1f MB)",
+            league, s["events"], s["odds"], payload.get("pages", 1),
+            "ok" if state else "MISSING", st["in"], st["pre"], st["post"],
+            path.name, path.stat().st_size / 1e6,
+        )
 
 
 def main() -> None:

@@ -28,6 +28,23 @@ services:
     env_file: .env.prod
     command: ["python", "-m", "youredge.ingest.catchup", "--loop"]
 
+  # In-game line movement, which no provider sells back. SGO carries only open,
+  # current and close per outcome, so the path between them exists only because
+  # this is watching -- see the module docstring. It writes raw gzipped slates and
+  # touches nothing else, which is why it is safe to run beside the poller.
+  #
+  # A bind mount rather than a named volume: these files are the point, and they
+  # should be visible on the host to back up and to replay, not buried in Docker's
+  # storage. `restart: unless-stopped` matters more here than anywhere else in this
+  # file -- a capture that dies at 3pm loses the rest of the slate, permanently.
+  capture:
+    image: youredge-engine
+    restart: unless-stopped
+    env_file: .env.prod
+    volumes:
+      - /var/lib/youredge/sgo_raw:/var/lib/youredge/sgo_raw
+    command: ["python", "-m", "youredge.ingest.sgo_capture", "--interval", "40"]
+
   # Runs once, copies the built frontend into a volume, exits. Caddy serves
   # that volume. A one-shot rather than a server because the frontend is static
   # once built, and running a second web server just to hand files to the first

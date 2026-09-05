@@ -231,6 +231,15 @@ class Ingestor:
         self.dry_run = dry_run
         self._market_ids: dict[tuple, int] = {}
         self._last: dict[tuple, tuple[int | None, float | None]] = {}
+        # Resolution and FBS status are per-event facts that do not change between
+        # captures, but there are 180 captures an hour of the same slate. Without
+        # these, a three-hour catch-up re-resolves the same 117 games 500 times.
+        # It matters most in a dry run, where the rollback discards the entity_xwalk
+        # rows that would otherwise make the second lookup cheap.
+        self._events: dict[tuple[str, str], tuple] = {}
+        self._fbs_cache: dict[tuple[str, str], bool] = {}
+        # Abbreviations become the stored `outcome` for home/away sides.
+        self._abbr: dict[str, str | None] = {}
         self.stats = {
             "files": 0, "events": 0, "events_live": 0, "unresolved": 0,
             "skipped_not_fbs": 0, "skipped_not_live": 0, "unmapped_odds": 0,
@@ -238,17 +247,27 @@ class Ingestor:
         }
 
     async def _fbs(self, conn, home: str, away: str) -> bool:
-        """At least one FBS side, which is the rule the user asked for.
+        """At least one FBS side.
 
         A crossover against an FCS opponent is a real FBS game and its market is
         worth keeping; two FCS teams is a board we have no context layer for.
         """
-        row = (await conn.execute(
-            text("""SELECT count(*) FROM teams
-                    WHERE team_id IN (:h, :a) AND classification = 'fbs'"""),
-            {"h": home, "a": away},
-        )).scalar()
-        return bool(row)
+        ck = (home, away)
+        if ck not in self._fbs_cache:
+            row = (await conn.execute(
+                text("""SELECT count(*) FROM teams
+                        WHERE team_id IN (:h, :a) AND classification = 'fbs'"""),
+                {"h": home, "a": away},
+            )).scalar()
+            self._fbs_cache[ck] = bool(row)
+        return self._fbs_cache[ck]
+
+    async def _abbr_of(self, conn, team_id: str) -> str | None:
+        if team_id not in self._abbr:
+            self._abbr[team_id] = (await conn.execute(
+                text("SELECT abbr FROM teams WHERE team_id = :t"), {"t": team_id},
+            )).scalar()
+        return self._abbr[team_id]
 
     async def _market_id(self, conn, gid, book, key, pname, side) -> int:
         ck = (gid, book, key, pname)
@@ -298,7 +317,10 @@ class Ingestor:
                 continue
             self.stats["events_live"] += 1
 
-            gid, home, away = await resolve_event(conn, league, ev)
+            ck = (league, ev.get("eventID") or "")
+            if ck not in self._events:
+                self._events[ck] = await resolve_event(conn, league, ev)
+            gid, home, away = self._events[ck]
             if not gid:
                 self.stats["unresolved"] += 1
                 continue
@@ -308,10 +330,8 @@ class Ingestor:
             await self._ingest_event(conn, ev, gid, home, away, captured_at, live)
 
     async def _ingest_event(self, conn, ev, gid, home, away, captured_at, live) -> None:
-        habbr = (await conn.execute(
-            text("SELECT abbr FROM teams WHERE team_id = :t"), {"t": home})).scalar()
-        aabbr = (await conn.execute(
-            text("SELECT abbr FROM teams WHERE team_id = :t"), {"t": away})).scalar()
+        habbr = await self._abbr_of(conn, home)
+        aabbr = await self._abbr_of(conn, away)
 
         for odd in (ev.get("odds") or {}).values():
             key = M.market_key(odd)
@@ -367,9 +387,29 @@ async def run(since: timedelta, books: tuple[str, ...], live_only: bool,
         return ing.stats
 
     engine = get_engine()
-    async with engine.begin() as conn:
+    async with engine.connect() as conn:
         for path in files:
-            await ing.ingest_file(conn, path)
+            # One transaction per capture file, not one for the whole run. A three-hour
+            # catch-up is 500-odd files and tens of thousands of rows; holding that open
+            # keeps a single long transaction against a managed Postgres for minutes,
+            # and a failure at the end would discard every file that had already parsed
+            # cleanly. Per-file means progress is durable and a re-run resumes rather
+            # than restarts -- the inserts are ON CONFLICT DO NOTHING, so overlapping a
+            # file that already landed costs nothing.
+            trans = await conn.begin()
+            try:
+                await ing.ingest_file(conn, path)
+            except Exception:
+                await trans.rollback()
+                raise
+            if dry_run:
+                # A dry run still resolves teams and events, and resolution writes
+                # entity_xwalk rows as it learns them. Those are harmless and
+                # idempotent, but "dry run" has to mean the database is untouched or
+                # it is not a rehearsal, so the work is done and then thrown away.
+                await trans.rollback()
+            else:
+                await trans.commit()
     return ing.stats
 
 

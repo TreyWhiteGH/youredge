@@ -33,7 +33,40 @@ BASELINE="021_career_links.sql"   # last migration that shipped before the track
 # never heard of it, so it is stripped here rather than requiring a second spelling of
 # the same secret in .env.prod.
 RAW_URL="${MIGRATE_DATABASE_URL:-${DATABASE_URL:-}}"
+
+# Nothing in this deployment exports DATABASE_URL into a shell -- the services get it
+# through compose's `env_file: .env.prod`, so an operator running this by hand has an
+# empty environment and silently fell through to the compose path, which then failed
+# looking for a `.env` that does not exist. Read the file the services read.
+#
+# Grepped rather than sourced, deliberately. `.env.prod` holds a bcrypt hash full of
+# `$`, and sourcing it would have the shell expand `$2a`, `$14` and whatever follows
+# into nothing -- the same class of mangling that commit 3027872 documented for
+# Compose, arriving by a different route.
+ENV_FILE="${ENV_FILE:-$(dirname "$0")/../.env.prod}"
+if [ -z "$RAW_URL" ] && [ -f "$ENV_FILE" ]; then
+    RAW_URL=$(sed -n 's/^DATABASE_URL=//p' "$ENV_FILE" | head -1)
+    [ -n "$RAW_URL" ] && echo "==> read DATABASE_URL from $(basename "$ENV_FILE")"
+fi
+
 DB_URL="${RAW_URL/+asyncpg/}"
+
+# Schema changes go to the direct endpoint, not the pooler.
+#
+# The engine's DATABASE_URL points at Neon's `-pooler` host, which is right for an
+# application making many short queries and wrong for DDL: the pooler multiplexes
+# transactions across backends and cannot promise the session semantics a migration
+# assumes. .env.prod already records the same distinction for pg_dump, where
+# BACKUP_DATABASE_URL exists precisely because "backups need a real session and the
+# pooler cannot give one" -- a migration needs one for the same reason.
+#
+# Neon's own convention is that the direct host is the pooled host without the suffix
+# (ep-name-pooler.region -> ep-name.region), which is exactly how the two URLs in
+# .env.prod differ. Set MIGRATE_DATABASE_URL to override if that ever stops holding.
+if [ -z "${MIGRATE_DATABASE_URL:-}" ] && [[ "$DB_URL" == *-pooler.* ]]; then
+    DB_URL="${DB_URL/-pooler./.}"
+    echo "==> using the direct (unpooled) endpoint for DDL"
+fi
 
 # Pinned to the major version production runs (DEPLOY.md step 1). A newer client is
 # fine against an older server, but pinning means the tool that applies a migration is

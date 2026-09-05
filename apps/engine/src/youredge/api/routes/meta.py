@@ -40,7 +40,18 @@ _COUNTS = text("""
       (SELECT count(*) FROM coaches)                                           AS coaches,
       (SELECT count(*) FROM transfers)                                         AS transfers,
       (SELECT count(*) FROM venues)                                            AS venues,
-      (SELECT max(captured_at) FROM odds_snapshots)                            AS odds_last_captured
+      -- Bounded to the past on purpose. CFBD's historical betting lines are stored
+      -- with captured_at set to the game's kickoff -- defensible for a finished game,
+      -- since a closing line is the price at kickoff, and nonsense for a scheduled
+      -- one: 1,282 rows currently claim capture times up to 12 December, and the
+      -- unbounded max rendered "last captured: 2026-12-12" on the Data page while the
+      -- poller was in fact running every hour.
+      --
+      -- This asks the question the page means -- when did we last observe a price --
+      -- rather than the latest timestamp in the column. The stamping convention
+      -- itself is left alone; it is only wrong for games that have not been played.
+      (SELECT max(captured_at) FROM odds_snapshots
+        WHERE captured_at <= now())                                            AS odds_last_captured
 """)
 
 # Phase state is asserted here rather than in the UI so one edit moves every surface that

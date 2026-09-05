@@ -70,5 +70,17 @@ cache/
 backups/
 
 # Production secrets. Same rule as .env: never committed.
-.env.prod
+#
+# Globbed, not literal. The exact-match version covered `.env.prod` and nothing
+# else, so `.env.prod.bak` -- a hand-made copy holding the same Neon password and
+# the same two API keys -- sat untracked and unignored for four days, one `git
+# add -A` from being published. A backup of a secret is a secret, and the naming
+# is whatever the hand that made it chose, so match the family rather than the
+# one spelling anyone thought of.
+.env.prod*
+# ...except the template, which is the one file in the family that must be committed.
+# It is tracked today, so the glob above cannot hide it -- .gitignore does not apply
+# to tracked files -- but that protection lasts exactly until someone untracks and
+# re-adds it, and losing the template is a silent way to make a deploy undocumented.
+!.env.prod.example
 .neon

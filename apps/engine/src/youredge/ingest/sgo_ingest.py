@@ -240,8 +240,21 @@ class Ingestor:
         self._fbs_cache: dict[tuple[str, str], bool] = {}
         # Abbreviations become the stored `outcome` for home/away sides.
         self._abbr: dict[str, str | None] = {}
+        # `unresolved` used to be one number covering two very different things, and
+        # on a college Saturday the harmless one drowns the other: 28% of live games
+        # failed to resolve, all of them D-III and FCS sides that are not in `teams`
+        # and never will be. An FBS game failing on a name mismatch would have landed
+        # in the same counter and been invisible. Split, so that one of these is
+        # expected noise and the other is always worth reading.
         self.stats = {
-            "files": 0, "events": 0, "events_live": 0, "unresolved": 0,
+            "files": 0, "events": 0, "events_live": 0,
+            # At least one side is not in `teams` at all. Expected: migration 012
+            # records that FCS programs enter our data only as crossover opponents,
+            # so a D-III fixture has no rows to match and cannot be classified.
+            "skipped_unknown_team": 0,
+            # Both sides known, no game row within 36 hours of kickoff. This one is
+            # a real fault -- a schedule gap or a bad kickoff -- and should be zero.
+            "unresolved_game": 0,
             "skipped_not_fbs": 0, "skipped_not_live": 0, "unmapped_odds": 0,
             "quotes_seen": 0, "quotes_offbook": 0, "rows": 0, "unchanged": 0,
         }
@@ -321,8 +334,21 @@ class Ingestor:
             if ck not in self._events:
                 self._events[ck] = await resolve_event(conn, league, ev)
             gid, home, away = self._events[ck]
+            if not home or not away:
+                self.stats["skipped_unknown_team"] += 1
+                continue
             if not gid:
-                self.stats["unresolved"] += 1
+                # Both teams are ones we know, so a missing game is our gap rather
+                # than SGO covering a division we do not. Logged with names because
+                # this is the case someone has to act on.
+                teams = ev.get("teams") or {}
+                self.stats["unresolved_game"] += 1
+                log.warning(
+                    "no canonical %s game: %s @ %s (%s)", league,
+                    ((teams.get("away") or {}).get("names") or {}).get("long"),
+                    ((teams.get("home") or {}).get("names") or {}).get("long"),
+                    (ev.get("status") or {}).get("startsAt"),
+                )
                 continue
             if league == "ncaaf" and not await self._fbs(conn, home, away):
                 self.stats["skipped_not_fbs"] += 1
